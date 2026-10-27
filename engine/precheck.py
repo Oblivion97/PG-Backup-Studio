@@ -8,8 +8,11 @@ creates anything: sizes of tables held under ACCESS EXCLUSIVE fall back to page 
 
 from __future__ import annotations
 
+import math
 import re
 import threading
+from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
 import psycopg
@@ -47,14 +50,18 @@ class Thresholds:
     @classmethod
     def from_settings(cls, settings: dict | None) -> "Thresholds":
         """Read `large_table_mb` / `large_table_rows` from settings.json content; bad values use defaults."""
-        d = settings or {}
+        d = settings if isinstance(settings, Mapping) else {}
         out = cls()
         mb, rows = d.get("large_table_mb"), d.get("large_table_rows")
-        if isinstance(mb, (int, float)) and not isinstance(mb, bool) and mb > 0:
+        if _positive_number(mb):
             out.large_mb = float(mb)
-        if isinstance(rows, (int, float)) and not isinstance(rows, bool) and rows > 0:
+        if _positive_number(rows):
             out.large_rows = int(rows)
         return out
+
+
+def _positive_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0
 
 
 @dataclass
@@ -245,27 +252,51 @@ def check_permissions(conn: psycopg.Connection, reads: dict) -> list[dict]:
 
 
 def order_index_check(conn: psycopg.Connection, relid: int, column: str) -> dict:
-    """Can an index serve the backup's "latest N" query on `column`?
+    """Can an index serve the backup's "latest N" query on `column`? See `order_index_checks`."""
+    return order_index_checks(conn, [(relid, column)])[(relid, column)]
+
+
+def order_index_checks(conn: psycopg.Connection, pairs: list[tuple[int, str]]) -> dict[tuple[int, str], dict]:
+    """Index advice for many (table oid, column) pairs in two queries.
 
     The backup orders by `col DESC` when the column cannot hold NULLs (`null_safe`) and by
     `col DESC NULLS LAST` otherwise; a btree index whose first key is the column serves the
     first form when it is ASC NULLS LAST / DESC NULLS FIRST and the second when it is
     DESC NULLS LAST / ASC NULLS FIRST. Partial and invalid indexes do not count.
     """
+    pairs = list(dict.fromkeys(pairs))
+    if not pairs:
+        return {}
     nn_valid = ("COALESCE((SELECT k.convalidated FROM pg_constraint k WHERE k.conrelid = a.attrelid"
                 " AND k.contype = 'n' AND k.conkey[1] = a.attnum LIMIT 1), true)"
                 if conn.info.server_version >= 180000 else "true")
-    row = conn.execute(f"SELECT a.attnum, a.attnotnull AND {nn_valid} FROM pg_attribute a WHERE a.attrelid = %s"
-                       " AND a.attname = %s AND a.attnum > 0 AND NOT a.attisdropped", (relid, column)).fetchone()
+    columns = conn.execute(
+        f"SELECT p.relid, p.col, a.attnum, a.attnotnull AND {nn_valid}"
+        " FROM unnest(%s::oid[], %s::text[]) AS p(relid, col)"
+        " LEFT JOIN pg_attribute a ON a.attrelid = p.relid AND a.attname = p.col AND a.attnum > 0"
+        " AND NOT a.attisdropped", ([r for r, _ in pairs], [c for _, c in pairs])).fetchall()
+    found = {(relid, col): (attnum, bool(nn)) for relid, col, attnum, nn in columns if attnum is not None}
+    indexes: dict[tuple[int, int], list[tuple[str, int]]] = defaultdict(list)
+    relids = sorted({relid for relid, _ in found})
+    if relids:
+        for relid, attnum, name, opt in conn.execute(
+                "SELECT x.indrelid, x.indkey[0], ic.relname, x.indoption[0] FROM pg_index x"
+                " JOIN pg_class ic ON ic.oid = x.indexrelid JOIN pg_am am ON am.oid = ic.relam"
+                " WHERE x.indrelid = ANY(%s::oid[]) AND am.amname = 'btree'"
+                " AND x.indpred IS NULL AND x.indisvalid ORDER BY ic.relname", (relids,)).fetchall():
+            indexes[(relid, attnum)].append((name, opt))
+    out = {}
+    for relid, column in pairs:
+        attnum, null_safe = found.get((relid, column), (None, False))
+        out[(relid, column)] = _index_verdict(column, attnum, null_safe, indexes.get((relid, attnum), []))
+    return out
+
+
+def _index_verdict(column: str, attnum: int | None, null_safe: bool, indexes: list[tuple[str, int]]) -> dict:
     col = display_ident(column)
-    if row is None:
+    if attnum is None:
         return {"exists": False, "indexed": False, "usable": False, "index": None, "null_safe": False,
                 "message": f"Column {col} does not exist."}
-    attnum, null_safe = row[0], bool(row[1])
-    indexes = conn.execute("SELECT ic.relname, x.indoption[0] FROM pg_index x"
-                           " JOIN pg_class ic ON ic.oid = x.indexrelid JOIN pg_am am ON am.oid = ic.relam"
-                           " WHERE x.indrelid = %s AND x.indkey[0] = %s AND am.amname = 'btree'"
-                           " AND x.indpred IS NULL AND x.indisvalid ORDER BY ic.relname", (relid, attnum)).fetchall()
     wanted = (0, 3) if null_safe else (1, 2)
     usable = [name for name, opt in indexes if opt in wanted]
     result = {"exists": True, "indexed": bool(indexes), "usable": bool(usable), "null_safe": null_safe,
@@ -321,8 +352,15 @@ def run_check(conn: psycopg.Connection, schemas: list[str] | None = None, mode: 
     sizes = _leaf_sizes(conn, [r["oid"] for r in leaves])
     check_cancel(cancel)
     candidates = _order_candidates(conn, [r["oid"] for r in roots])
-    entries = [_table_entry(conn, r, [x for x in leaves if x["root_oid"] == r["oid"]], sizes,
-                            candidates.get(r["oid"], []), chosen.get(r["oid"]), limits, cancel) for r in roots]
+    by_root = defaultdict(list)
+    for x in leaves:
+        by_root[x["root_oid"]].append(x)
+    pairs = [(oid, c["name"]) for oid, cols in candidates.items() for c in cols]
+    pairs += [(oid, o.order_by) for oid, o in chosen.items() if o.data == "latest" and o.order_by]
+    checks = order_index_checks(conn, pairs)
+    check_cancel(cancel)
+    entries = [_table_entry(r, by_root[r["oid"]], sizes, candidates.get(r["oid"], []), chosen.get(r["oid"]),
+                            limits, checks, cancel) for r in roots]
     problems = check_permissions(conn, read_set(relations, mode, options))
     return {"server": info, "thresholds": {"large_mb": limits.large_mb, "large_rows": limits.large_rows},
             "tables": entries, "problems": problems, "blocking": bool(problems),
@@ -392,8 +430,8 @@ def _order_candidates(conn: psycopg.Connection, oids: list[int]) -> dict[int, li
     return out
 
 
-def _table_entry(conn, rel: dict, leaves: list[dict], sizes: dict, candidates: list[dict],
-                 option: TableOption | None, limits: Thresholds, cancel) -> dict:
+def _table_entry(rel: dict, leaves: list[dict], sizes: dict, candidates: list[dict],
+                 option: TableOption | None, limits: Thresholds, checks: dict, cancel) -> dict:
     """One logical table (a partitioned table is one entry, its partitions are summed)."""
     check_cancel(cancel)
     stats = [sizes[x["oid"]] for x in leaves if x["oid"] in sizes]
@@ -401,14 +439,13 @@ def _table_entry(conn, rel: dict, leaves: list[dict], sizes: dict, candidates: l
     est_rows = int(sum(max(s["reltuples"], 0) for s in stats))
     reasons = ((["size"] if size > limits.large_mb * 2 ** 20 else [])
                + (["rows"] if est_rows > limits.large_rows else []))
-    columns = [{**c, "index": order_index_check(conn, rel["oid"], c["name"])} for c in candidates]
+    columns = [{**c, "index": checks[(rel["oid"], c["name"])]} for c in candidates]
     default = next((c["name"] for c in columns if c["timestamp_like"]), None) or \
         next((c["name"] for c in columns if c["pk"]), None)
     opt = option or TableOption(rel["schema"], rel["name"], "full", default)
     option_error = None
     if opt.data == "latest" and not any(c["name"] == opt.order_by for c in columns):
-        check = order_index_check(conn, rel["oid"], opt.order_by)
-        if not check["exists"]:
+        if not checks[(rel["oid"], opt.order_by)]["exists"]:
             option_error = (f"Table {rel['qname']}: the ordering column {display_ident(opt.order_by)} "
                             f"no longer exists; choose another column.")
     return {"schema": rel["schema"], "name": rel["name"], "qname": rel["qname"],

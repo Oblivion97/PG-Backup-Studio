@@ -145,7 +145,6 @@ def test_threshold_settings_parsing():
         assert got.large_mb >= 0 and got.large_rows >= 0 and got.large_mb == got.large_mb, (neg, got)
 
 
-@pytest.mark.xfail(reason="BUG-S2-5 (minor): Thresholds.from_settings raises AttributeError for a non-dict value", strict=True)
 def test_threshold_settings_non_dict_does_not_raise():
     assert Thresholds.from_settings("junk") == Thresholds()
 

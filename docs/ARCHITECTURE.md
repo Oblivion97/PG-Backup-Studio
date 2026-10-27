@@ -474,7 +474,7 @@ another role still fails there (README).
 13. Schema mode with options → not partial, no `_partial`; data mode + partial → warning.
 14. (Option A only) owner ACLs emitted as `GRANT ALL`; round trip `relacl` identical; `pg_dump -s` diff 0.
 
-## 10. Step 3 design — Storage and jobs (2026-10-26, awaiting approval)
+## 10. Step 3 design — Storage and jobs (2026-10-26, approved 2026-10-27)
 
 **Goal.** Persist saved servers, settings, history and per-database backup profiles in `./data/*.json`
 safely (atomic, thread-safe, corruption-tolerant, versioned), and run backups/restores as background
@@ -661,3 +661,311 @@ Per-object events are not logged (thousands). `error_count`: restore = engine co
     deletes only that file; `shutdown()` during a running backup → `cancelled`, no `.part`.
 12. **Bug fixes:** the three Step 2 xfail-strict tests pass (markers removed); `order_index_checks` equals
     `order_index_check` for every fixture candidate column; 18k-table pre-check scales linearly.
+
+## 11. Step 4 design — Database management (2026-10-27, approved)
+
+**Goal.** Safe server-level actions on databases — list, create, drop, rename, clone, kill
+connections, role list — as functions in `engine/db.py`, plus restore targets "new database" and
+"drop and recreate" in `jobs.start_restore`; each refuses clearly instead of doing damage.
+**Out of scope:** HTTP routes (Step 5), UI modals (Step 6). Decision record:
+`decisions/006-step4-database-management.md`.
+
+### 11.1 Interfaces (`engine/db.py`)
+Every action opens its own short autocommit connection to the maintenance DB and closes it.
+
+| Function | Behaviour |
+|---|---|
+| `connect_maintenance(server) -> Connection` | autocommit; configured `maintenance_db`, else `postgres`, else `template1` (fallback only on 3D000 "database does not exist") |
+| `list_databases(server) -> list[dict]` | non-template DBs: `name, owner, encoding, collation, size` (`pg_database_size`, `null` without CONNECT), `connections` (sessions in `pg_stat_activity`, own excluded), `allow_connections`, `protected` (11.3); sorted by name |
+| `list_roles(server) -> list[dict]` | `name, superuser, can_login, createdb`; `pg_*` predefined roles left out |
+| `list_templates(server) -> list[str]` | `datistemplate` DBs, template0 first |
+| `database_sessions(server, name) -> int` | other sessions on `name` (for "this disconnects N sessions" warnings) |
+| `database_contents(server, name) -> dict` | `{empty, schemas, tables, functions, types}` user objects (system schemas and extension members ignored) |
+| `create_database(server, name, *, owner=None, template=None, encoding=None) -> dict` | `CREATE DATABASE … [OWNER] [TEMPLATE] [ENCODING]`; returns the new list row |
+| `drop_database(server, name, *, confirm) -> dict` | `confirm` must equal `name`; terminate others; `DROP DATABASE … WITH (FORCE)` on PG 13+, plain `DROP` on PG 12; returns `{terminated}` |
+| `rename_database(server, name, new_name) -> dict` | terminate others, `ALTER DATABASE … RENAME TO …`, retried (11.4) |
+| `clone_database(server, source, new_name, *, owner=None) -> dict` | terminate others on `source`, `CREATE DATABASE new TEMPLATE source [OWNER]`, retried (11.4) |
+| `kill_connections(server, name) -> dict` | `pg_terminate_backend` for every other session on `name`: `{terminated, failed}` |
+| `class DbActionError(EngineError)` | `.code`: `invalid` · `not_found` · `exists` · `protected` · `permission` · `in_use` (Step 5 maps to 400/404/409/403/403/409) |
+
+All names go through `psycopg.sql.Identifier`; an encoding is a literal checked with
+`pg_char_to_encoding(x) >= 0`.
+
+### 11.2 Name rules (create / rename / clone / restore "new")
+Non-empty, no NUL, at most 63 **bytes** in UTF-8: longer names are refused instead of being silently
+truncated by the server (`NAMEDATALEN − 1`). Any other character is allowed (always quoted). Existing
+name → `exists`; unknown source/target → `not_found`. Names are compared exactly (case-sensitive).
+
+### 11.3 Protected databases (decision 006 §1)
+`template0`, `template1` and the server's maintenance DB cannot be dropped or renamed → `protected`.
+Clone and kill are allowed on all of them.
+
+### 11.4 Terminate and race handling
+- "Other sessions" = `pg_stat_activity` rows with `datname = name AND pid <> pg_backend_pid()`.
+- Rename and clone fail with 55006 (`object_in_use`) if a session reconnects between terminate and the
+  statement: terminate + retry up to 3 times, 0.5 s apart, then `in_use` "N sessions keep reconnecting
+  to X; stop the application that uses it and try again."
+- `pg_terminate_backend` returns false / raises 42501 for other roles' sessions when the login is
+  neither superuser nor in `pg_signal_backend`: counted in `failed`, never raised (decision 006 §5). A
+  following DROP/RENAME then fails with `in_use` naming the count.
+- PG 13+ `DROP … WITH (FORCE)` terminates by itself; terminating first anyway keeps PG 12 the same.
+
+### 11.5 Error mapping (SQLSTATE → code, message)
+| SQLSTATE | Code | Message |
+|---|---|---|
+| 42P04 duplicate_database | exists | "A database named X already exists." |
+| 3D000 invalid_catalog_name | not_found | "Database X does not exist." |
+| 42501 insufficient_privilege | permission | "<login> may not <action> X: <server message>" |
+| 42704 undefined_object (owner) | invalid | "Role R does not exist." |
+| 55006 object_in_use | in_use | as 11.4 |
+| 22023 / 42809 (encoding / template incompatible) | invalid | server message + "use template0 for another encoding" |
+| other `psycopg.Error` | — | `EngineError` "Could not <action> X: <message>" |
+
+### 11.6 Restore targets (`jobs.start_restore(..., target=None)`)
+`target = {"mode": "existing" | "create" | "recreate", "owner": None, "allow_non_empty": False,
+"confirm": None}`; default mode `existing`.
+- **existing:** the DB must exist; non-empty → refused unless `allow_non_empty` (decision 006 §4).
+- **create:** name rules; must not exist; created from `template0`, `ENCODING 'UTF8'`, optional owner.
+- **recreate:** `confirm` must equal the DB name; not protected; drop (if it exists) then create as above.
+- Checks that need no DB (name, confirm, protected by name) run in `start_restore` → `JobError invalid`.
+  The existence/emptiness check and the create/drop run **inside the job** in a new phase `preparing`
+  (logged; cancel before the DROP starts; a failure → job `failed`) (decision 006 §3). History gets
+  `target_mode`.
+- New `JobManager.jobs_using(server_id, db) -> list[str]` (running job ids). Step 5 calls it before
+  drop / rename / kill and refuses with conflict (decision 006 §2); `start_restore` with `recreate`
+  refuses itself when another job uses the DB.
+
+### 11.7 Risks and edge cases
+| Risk | Handling |
+|---|---|
+| Dropping the wrong DB | `confirm` = exact name, checked in `db.drop_database` itself, not only in the UI |
+| Sessions reconnect (connection pools) | retry ×3, then `in_use` with the count |
+| Clone disconnects users of the source | `database_sessions` lets the UI warn first |
+| Non-superuser cannot kill others | partial result `{terminated, failed}`; clear follow-up error |
+| Encoding not compatible with template1 | `invalid` with the template0 hint |
+| Server truncates long names | refused above 63 bytes |
+| Maintenance DB missing | fallback `postgres` → `template1` |
+| CREATE/DROP DATABASE cannot run in a transaction | autocommit connections only |
+| PG 12 (no FORCE) | terminate then plain DROP; tested with a patched server version |
+
+### 11.8 Test plan (real PG 18; every DB and role named `pgbs_test_*`)
+1. List: templates excluded, sizes > 0, `connections` counts an open session, `protected` flags,
+   `size = null` for a DB the login lacks CONNECT on.
+2. Create: owner / template / encoding; LATIN1 from template1 → `invalid` with hint, from template0 → OK;
+   63-byte name OK, 64 bytes → `invalid`; names with spaces, quotes, emoji; duplicate → `exists`; unknown
+   owner → `invalid`; login without CREATEDB → `permission`.
+3. Drop: wrong `confirm` → `invalid`; 2 open sessions → dropped, `terminated = 2`; protected → `protected`;
+   missing → `not_found`; PG 12 path issues no FORCE.
+4. Rename: with an open session → renamed; target exists → `exists`; a session reconnecting in a loop →
+   `in_use` after 3 tries.
+5. Clone: with sessions on the source → clone has the same table row counts; existing name → `exists`.
+6. Kill: superuser terminates all others; a non-superuser role → `failed` > 0, no exception.
+7. Restore targets via jobs: create → new DB, restore OK; recreate over a non-empty DB with an open session
+   → old data gone, restore OK; recreate without / with wrong confirm → `JobError invalid`; existing
+   non-empty → job fails with a clear message, with `allow_non_empty` → runs; `jobs_using` lists a running
+   restore.
+
+## 12. Step 5 design — JSON API (2026-10-27, approved)
+
+**Goal.** `app.py` exposes the engine, store, jobs and database management as the JSON API of the spec,
+with one error format, status codes, local-only protection, password prompting and "open folder"; it
+serves `static/index.html`. **Out of scope:** the UI itself (Step 6). Decision record:
+`decisions/007-step5-json-api.md`.
+
+### 12.1 App structure
+- `create_app(store=None, manager=None) -> Flask` (tests pass a `Store(tmp_path)` and a `JobManager` with
+  fake engines); `main()` builds `Store()`, `jobs.init(store)` (atexit cancel), binds `127.0.0.1:PORT`
+  (default 8000), `threaded=True`.
+- `Passwords` (in `app.py`): `{server_id: password}` in memory, lock-protected (decision 007 §2). Cleared
+  for a server on save / delete, or when the server rejects it.
+- `server_for(id, body_password=None) -> dict`: stored record with password = body password, else cached,
+  else stored; `remember_password=false` and none known → `ApiError(401, password_required)`.
+- One `ApiError(status, message, code)` plus error handlers: `StoreError` / `JobError` / `DbActionError`
+  by `.code`; `BackupError` / `RestoreError` / other `EngineError` → 400 `failed`; an `EngineError` whose
+  cause is a password/auth failure → 401 `password_required` (cached password dropped); anything else →
+  500, logged. Responses never contain a traceback or a password.
+- Request guard (decision 007 §1) on `/api/*`: `Host` must be `127.0.0.1:<port>` / `localhost:<port>` and
+  header `X-PGBS: 1`; a request with a body must be `application/json` and a JSON object → else 403 / 400.
+
+### 12.2 Endpoints
+`{sid}` = server id; `{db}` = database name (no `/`, decision 007 §6). Bodies and answers are JSON.
+
+| Method + path | Body | Success | Errors |
+|---|---|---|---|
+| GET `/api/app` | – | `{version, warnings}` (store warnings such as moved corrupt files) | – |
+| GET `/api/servers` | – | `[public server + password_cached]` | – |
+| POST `/api/servers` | server fields; `id` to update | 201 create / 200 update: public server | 400, 404 |
+| DELETE `/api/servers/{sid}` | – | `{deleted: true}` (its profiles too) | 404 |
+| POST `/api/servers/test` | server form; `id` → stored password if none typed | `{ok, version, user, is_superuser}` or `{ok: false, error}` | 400 |
+| POST `/api/servers/{sid}/connect` | `{password?}` | server info; password cached when not stored | 401, 404 |
+| GET `/api/servers/{sid}/info` | – | `server_info` + `can_create_db` | 401, 404 |
+| GET `/api/servers/{sid}/databases` | – | `db.list_databases` + `busy` (running job ids) | 401, 404 |
+| GET `/api/servers/{sid}/roles` | – | `db.list_roles` | 401 |
+| GET `/api/servers/{sid}/templates` | – | `db.list_templates` | 401 |
+| POST `/api/servers/{sid}/databases` | `{name, owner?, template?, encoding?}` or `{name, clone_from, owner?}` | 201 database row | 400, 403, 404, 409 |
+| DELETE `/api/servers/{sid}/databases/{db}` | `{confirm}` | `{name, terminated}` | 400, 403, 404, 409 (job uses it) |
+| POST `/api/servers/{sid}/databases/{db}/rename` | `{new_name}` | database row | 400, 403, 404, 409 |
+| POST `/api/servers/{sid}/databases/{db}/kill` | – | `{terminated, failed}` | 404, 409 |
+| GET `/api/servers/{sid}/databases/{db}/sessions` | – | `{sessions}` (warn before clone / drop) | 404 |
+| GET `/api/servers/{sid}/databases/{db}/contents` | – | `db.database_contents` (restore target check) | 404 |
+| GET `/api/servers/{sid}/databases/{db}/schemas` | – | `[name]` (`catalog.resolve_schemas`) | 404 |
+| POST `/api/servers/{sid}/databases/{db}/check` | `{schemas?, mode?, tables?}` | `precheck.run_precheck` (thresholds from settings) | 400 |
+| GET `/api/servers/{sid}/databases/{db}/profile` | – | `{profile}` or `{profile: null}` | – |
+| DELETE `/api/servers/{sid}/databases/{db}/profile` | – | `{deleted: bool}` | – |
+| POST `/api/backup` | `{server_id, database, options, password?}` | 202 `{job_id}` | 400, 401, 404, 409 |
+| POST `/api/restore` | `{server_id, database, file` or `history_id, options?, target?, password?}` | 202 `{job_id}` | 400, 401, 404, 409 |
+| GET `/api/jobs` | – | `jobs.list_jobs()` | – |
+| GET `/api/jobs/{id}?log_after=n` | – | job snapshot (ARCHITECTURE 10.5) | 404 |
+| POST `/api/jobs/{id}/cancel` | – | `{cancelled: bool}` | 404 |
+| GET `/api/history` | – | newest first | – |
+| DELETE `/api/history/{id}?delete_file=1` | – | removed entry + `file_deleted` | 404 |
+| POST `/api/history/{id}/open-folder` | – | `{opened: path}` | 404 |
+| GET / POST `/api/settings` | changes | merged settings | 400 |
+
+Notes:
+- Drop / rename / kill check `manager.jobs_using(sid, db)` first → 409 `conflict` naming the job.
+- `/api/restore` with `history_id` takes that entry's `file` (a backup entry with status success); otherwise
+  `file` must be an existing file on the PC.
+- The backup endpoint stores nothing itself; the job saves the profile on success (ARCHITECTURE 10.4).
+- `can_create_db` = superuser or `rolcreatedb` (lets the UI hide "Create").
+
+### 12.3 Status codes and error format (decision 007 §3)
+`{"error": "...", "code": "..."}`. 400 invalid / failed · 401 password_required · 403 protected /
+permission / forbidden · 404 not_found · 409 exists / in_use / conflict / busy · 500 unexpected.
+
+### 12.4 Risks and edge cases
+| Risk | Handling |
+|---|---|
+| Another website POSTs to the app (CSRF) / DNS rebinding | Host check + `X-PGBS` header + JSON-only (decision 007 §1) |
+| Password leak | never in a response, log or history; kept in memory only when not stored |
+| Wrong stored password | 401 `password_required`; the UI asks and retries with `password` |
+| Long pre-check blocks one request thread | Flask threaded; statement timeout 60 s |
+| Server deleted while a job runs | job keeps its copy (Step 3); profile save for a deleted server is skipped silently |
+| DB names with `/` | cannot be used in URL actions (README) |
+| Open folder with a path from the browser | only paths recorded in history are opened |
+| JSON body not an object / invalid types | 400 with a clear message |
+
+### 12.5 Test plan (Flask test client; `Store(tmp_path)`; real PG 18 where marked)
+1. Guard: missing `X-PGBS` → 403; `Host: evil.example` → 403; non-JSON body → 400; `GET /` works without
+   the header.
+2. Servers: create / update / delete / list; `password` never in any response (scan every JSON answer of
+   the suite); validation 400; test connection ok and `{ok: false}` for a wrong password (PG).
+3. Password prompting (PG): server with `remember_password=false` → databases 401 `password_required`;
+   `connect` with a wrong password → 401; with the right one → databases 200; editing the server clears it.
+4. DB actions (PG): create / clone / rename / kill / drop through the API incl. 403 protected, 409 exists,
+   409 conflict while a fake job uses the DB, wrong confirm 400.
+5. Backup → poll → history → restore from `history_id` into a new DB (PG); job 404; cancel; settings 400.
+6. Open folder with `os.startfile` / `subprocess` patched: called with the recorded path only; 404 for a
+   missing entry.
+7. Errors: an exception inside a route → 500 `{"error": "Unexpected error: ..."}` without traceback.
+
+## 13. Step 6 design — UI (2026-10-27, approved)
+
+**Goal.** `static/index.html` is the single-page UI for every feature through the Step 5 API: servers,
+database list and actions, backup with pre-check and per-table options, restore, live progress, history.
+**Out of scope:** API changes beyond small additions found while building (each one noted here), README
+(Step 7). Decision record: `decisions/008-step6-ui.md`.
+
+### 13.1 Layout
+```
++--------------------+---------------------------------------------------------------+
+| PG Backup Studio   |  [Databases] [Backup] [Restore] [Activity (2)] [History]      |
+|                    +---------------------------------------------------------------+
+| SERVERS            |  local-pg · PostgreSQL 18.4 · postgres (superuser)   [Edit]   |
+| ● local-pg         |                                                               |
+| ○ staging          |  Databases (12)                 [filter...]  [+ Create]       |
+| + Add server       |  Name        Size     Owner     Enc.   Conn.                  |
+|                    |  shop        1.2 GB   app       UTF8   3     [Backup][Restore]|
+|                    |                                            [... rename/clone/ |
+| -------------      |                                               kill/drop]      |
+| Jobs: 1 running    |                                                               |
+| [Settings]         |                                                 toasts        |
++--------------------+---------------------------------------------------------------+
+```
+- Sidebar: servers with a dot (green = connected this session, grey = not yet, red = last attempt
+  failed), "+ Add server", a running-jobs count linking to Activity, Settings.
+- Tabs Databases / Backup / Restore act on the selected server; Activity and History are global.
+- Below about 900 px the sidebar collapses to a top bar (laptop widths are the target; phones are not).
+- Light and dark colours from CSS variables switched by `prefers-color-scheme`.
+
+### 13.2 Screens
+| Screen | Content | API |
+|---|---|---|
+| Server modal | name, host, port, user, password (empty = keep; "clear" link), remember password, sslmode, maintenance DB; **Test connection** shows version + superuser or the error; Save; Delete (confirm) | `POST /api/servers`, `/test`, `DELETE` |
+| Databases | header with server info; table: name, size, owner, encoding, connections, busy badge (job running); row actions Backup, Restore, menu Rename / Clone / Kill connections / Drop; Create hidden when `can_create_db` is false | `/info`, `/databases`, `/roles`, `/templates`, `/sessions` |
+| Create / clone modal | name, owner (role list), template (list), encoding; clone: source shown, warning with its session count | `POST .../databases` |
+| Rename / drop modals | rename: new name; drop: type the name; both show the session count and that sessions are terminated | `.../rename`, `DELETE` |
+| Backup | DB picker; "Saved settings from <date>" + Reset to defaults; schemas (all ticked); mode; owners & grants; gzip; output folder; Advanced: lock timeout, speed limit, file name; pre-check panel (problems, locks, impact, load note); table list (13.4); Start | `/schemas`, `/profile`, `/check`, `POST /api/backup` |
+| Restore | source: history picker (successful backups, newest first, Partial badge) or typed path; target server (connected ones); target: existing DB (with "not empty" warning from `/contents`) / new name + owner / drop and recreate (type the name); on error: continue / stop; single transaction; Start | `/history`, `/contents`, `POST /api/restore` |
+| Activity | job cards (running first): kind, server/db, phase, progress bar with % and ETA, the Feature 5 counters, elapsed, Cancel; expanding a card shows the live log (errors red) and, when finished, the result (errors with object + message + SQL snippet, warnings, file) | `/api/jobs`, `/api/jobs/<id>`, `/cancel` |
+| History | kind, when, server/db, file, size, duration, status, counts, Partial badge; actions Restore (pre-fills Restore), Open folder, Delete (confirm, optional file) | `/api/history`, `open-folder`, `DELETE` |
+| Settings modal | default output folder, large-table MB / rows, history limit | `/api/settings` |
+
+### 13.3 Client structure (one `<script>`, about 1500-2000 lines)
+- `api(method, path, body)`: `fetch` with `X-PGBS: 1` + JSON; returns data or throws `ApiError {status,
+  code, message}`; on 401 `password_required` opens the password modal and retries once (decision 008 §4).
+- `el(tag, attrs, ...children)`: DOM builder; text always through `textContent` (decision 008 §2).
+- `state`: servers, selected server, per-server cache (info, databases, roles), current tab, backup form,
+  restore form, jobs. Each screen's render function rebuilds its own container from `state`.
+- `router`: parses `location.hash` (decision 008 §3), selects server + tab, calls the screen's `load()`.
+- `poller`: while any job runs, `GET /api/jobs` every 2 s (sidebar count, Activity list); each running or
+  expanded card in view polls `GET /api/jobs/<id>?log_after=<last seq>` every 700 ms and appends log
+  lines. Stops when nothing runs. On finish: toast ("Backup of shop finished, 1.2 GB") and refresh of
+  History / Databases.
+- `toast(message, kind)`: API errors (spec: show `{error}` as a toast), successes, and the warnings from
+  `/api/app` at start (moved corrupt files).
+- `fmt`: sizes (B/KB/MB/GB/TB, 1024-based), durations (`45 s`, `3 min 12 s`, `1 h 05 min`), dates in
+  local time, numbers with thousands separators.
+
+### 13.4 Backup panel details
+- On open: `GET /schemas` and `GET /profile` in parallel, fill the form (profile wins; profile tables
+  that no longer exist come back from the check as `ignored_options`, new tables are Full), run the check.
+- Check body: `{schemas, mode, tables: [non-full options]}`; the answer replaces the table list, problems,
+  locks and impact. Any form change shows "Check is out of date" + Re-check (decision 008 §5).
+- Problems block Start, each with a fix button: schema without USAGE -> untick the schema; table without
+  SELECT / RLS -> set Schema only.
+- Table rows (decision 008 §6): Latest N shows the ordering-column select (`order_columns`, default
+  marked) and N; index advice from the check; `option_error` in red, blocks Start.
+- Partial summary above Start: "3 tables partial: the file is named ..._partial.sql; FKs to them become
+  NOT VALID".
+- Start -> `POST /api/backup {server_id, database, options}` -> Activity with that card open.
+
+### 13.5 States every screen handles
+Loading (spinner, buttons disabled); empty (no servers -> welcome card with "+ Add server"; no
+databases; no history); error (toast, plus an inline message where it belongs, e.g. under the field for
+400 `invalid`); server not reachable (red dot, Retry); password needed (modal); job conflict 409 (toast
+naming the job, link to Activity); app stopped (fetch fails -> banner "The app is not running" + Retry).
+
+### 13.6 Risks and edge cases
+| Risk | Handling |
+|---|---|
+| XSS through database / table / role names | `textContent` only; QA test with a hostile DB name (decision 008 §2) |
+| Very many tables (18k fixture) | large tables + first 200 others rendered, filter for the rest |
+| Polls pile up when a request is slow | next poll scheduled after the previous answer, never `setInterval` |
+| Many log lines | at most 200 per card (server caps too); only new lines appended, by `seq` |
+| Hidden browser tab | polling slows to 5 s while `document.hidden` |
+| Password shown again in the server form | field always empty on edit; `has_password` shown as "saved" |
+| Drop / recreate by mistake | typed name; the button stays disabled until it matches exactly |
+| Two browser tabs open | works (state is on the server); each tab polls on its own |
+
+### 13.7 Test plan
+Automated (`tests/test_step6_ui.py`, no browser):
+1. `GET /` serves the page; size < 150 KB; no external script or style sources.
+2. Every `api('<METHOD>', '/api/...')` call in the script matches a Flask rule allowing that method.
+3. No `innerHTML` / `outerHTML` / `insertAdjacentHTML` with anything but a constant string; no `alert(`,
+   `confirm(`, `prompt(`, `eval(`.
+
+Click-through in Chrome against PG 18 (QA, screenshots in the QA report):
+4. Add a server with a wrong password: test fails with the message; fix it: test shows the version; save;
+   reload keeps it; the password is never visible in the form or in network answers.
+5. Server without saved password: prompt, then databases load; wrong password: prompt again.
+6. Create, clone (with a session open), rename, kill, drop (typed name; button disabled until it
+   matches); a protected DB shows the error toast.
+7. Backup with pre-check: blocked by a read-only user's RLS table, fix button, Start; Latest N + Schema
+   only gives a `_partial` file; progress moves 0 to 100; profile pre-filled on reopen; Reset to defaults.
+8. Cancel a running backup; two backups at once in Activity.
+9. Restore from history into a new DB, into an existing non-empty DB (warning), drop and recreate (typed
+   name); errors listed in the result.
+10. History: Partial badge, Open folder, delete an entry with and without the file.
+11. Hostile DB name `pgbs_test_<img src=x onerror=alert(1)>` shows as text everywhere.
+12. Dark mode; 1280 px and 1024 px widths; reload on each tab keeps the place.

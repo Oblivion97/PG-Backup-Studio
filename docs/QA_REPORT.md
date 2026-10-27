@@ -161,3 +161,39 @@ and `tests/step2_helpers.py`. Only PG 18.4 is installed: PG 12-17 behaviour is s
 
 Rerun: `PGPASSWORD=<pw> python -m pytest -q` (about 14 min; slow parts: 18k-table fixture about 40 s, 10 s default-timeout test). Step 2 only:
 `python -m pytest -q tests/test_dev_step2.py tests/test_step2_safety.py tests/test_step2_partial.py tests/test_step2_precheck.py tests/test_step2_edge.py`.
+
+## Step 3 — Storage and jobs (2026-10-27): PASS
+- Full suite on PG 18.4 / Windows 11: **443 passed, 1 skipped** (POSIX file modes) in 9 min 57 s.
+- New: `tests/test_step3_store.py` (37: restart persistence, password keep/replace/clear, validation,
+  atomic replace + PermissionError retry, 20×50 concurrent history writes, corrupt/BOM/newer-version
+  files, settings fallback, history trim and delete, interrupted cleanup, Windows ACL = user + SYSTEM)
+  and `tests/test_step3_jobs.py` (24: exact percent formulas, ETA rules, history/profile at the end,
+  failures, cancel, busy/conflict, snapshot isolation, pruning, shutdown, restart; real PG: progress
+  0→100 for backup and restore, schema-only 100, cancel mid-COPY in < 2 s with no files or backends left,
+  3 simultaneous backups → 3 distinct files with 5 pollers, lock timeout, restore errors capped at 20).
+- BUG-S2-3/4/5 fixed; their former xfail-strict tests now pass. Pre-check scaling: 1500 tables 0.23 s,
+  4500 tables 0.58 s (was 5.6 s).
+
+## Step 4 — Database management (2026-10-27): PASS
+- Full suite on PG 18.4: 460 passed, 1 failed, 1 skipped (12 min 58 s). Failure: BUG-S4-1 (below).
+- BUG-S4-1 (major, fixed): `connect_maintenance` did not fall back from a missing maintenance DB when the
+  host resolves to several addresses (`localhost` = ::1 + 127.0.0.1): psycopg's combined error carries no
+  SQLSTATE. Fix: `_missing_database` also matches `database "..." does not exist`. The same check made a
+  restore into a missing DB report a generic error instead of `not_found`. Re-run of
+  `test_step3_jobs.py` + `test_step4_dbmgmt.py`: 42 passed.
+- New: `tests/test_step4_dbmgmt.py` (18: list incl. size without CONNECT, roles/templates/sessions,
+  maintenance fallback, create owner/template/encoding/name limits/odd names/errors, drop incl. sessions,
+  protected, PG 12 without FORCE, rename incl. a reconnecting session -> in_use, clone with sessions, kill
+  as superuser and as a plain role, restore targets create / recreate / existing non-empty / validation /
+  jobs_using conflict / cancel before the drop).
+
+## Step 5 — JSON API (2026-10-27): PASS
+- Full suite on PG 18.4: 471 passed, 1 failed, 1 skipped. All 11 Step 5 API tests passed.
+- The failure was in Step 4: `test_rename_with_a_reconnecting_session_gives_in_use` depended on a
+  session reconnecting before every rename attempt (timing). It is replaced by
+  `test_rename_with_a_session_that_stays_gives_in_use_after_3_tries` (terminate patched to a no-op:
+  3 tries, then `in_use`, database unchanged). Re-run of `tests/test_step4_dbmgmt.py`: 18 passed.
+- New: `tests/test_step5_api.py` (guard 403/400, server CRUD + validation, test connection ok / `ok:
+  false`, password prompting + cache cleared on edit, DB actions incl. 403 / 409 / wrong confirm,
+  backup -> poll -> history -> restore from `history_id`, open folder with the recorded path only,
+  500 without traceback; every JSON answer is scanned for the stored and the typed password).

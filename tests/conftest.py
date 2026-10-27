@@ -3,11 +3,14 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+# The app must never touch the real ./data folder during tests.
+os.environ["PGBS_DATA_DIR"] = tempfile.mkdtemp(prefix="pgbs_test_data_")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

@@ -96,8 +96,6 @@ def test_schema_dropped_after_check_fails_cleanly(env, server, tmp_path, monkeyp
     assert app_backends(db) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-S2-4 (minor): a schema dropped between check and lock raises 3F000 "
-                                       "(InvalidSchemaName), which is not retried like a dropped table (42P01)")
 def test_schema_dropped_after_check_is_retried_like_a_table(env, server, tmp_path, monkeypatch):
     db, go = _drop_schema_after_check(env, server, tmp_path, monkeypatch, "schemagone2")
     res = go()
@@ -297,8 +295,6 @@ def test_precheck_speed_with_1500_tables(many, server):
     assert len(pre["tables"]) == 1500 and took < 10, took
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-S2-3 (minor, performance): run_check groups leaves per root with a list "
-                                       "comprehension over all leaves, O(n^2): 8000 tables ~10 s, 18000 ~140 s")
 def test_precheck_time_grows_linearly_with_table_count(many, server, capsys):
     name = many[0]
     t0 = time.monotonic()

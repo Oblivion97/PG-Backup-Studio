@@ -1,6 +1,6 @@
 # 005 — Step 3: storage files, job lifecycle, app close, passwords file, concurrency
 
-_Date: 2026-10-26 · Status: proposed (needs user approval with the Step 3 plan). Facts marked "verified"
+_Date: 2026-10-26 · Status: **approved by the user 2026-10-27** (all six recommendations, Windows option A). Facts marked "verified"
 were checked on Windows 11 / Python 3.14. Design: ARCHITECTURE §10._
 
 ## 1. JSON storage: re-read on every change, atomic replace, never crash on a bad file

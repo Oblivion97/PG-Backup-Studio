@@ -932,15 +932,34 @@ class _Reporter:
             self.emit(event, data)
 
 
+def _reserve(path: str) -> bool:
+    """Create `<path>.part` exclusively; False when it (or the final file) already exists.
+
+    Exclusive create makes the name unique even when several backups start in the same second.
+    """
+    if os.path.exists(path):
+        return False
+    try:
+        with open(path + ".part", "xb"):
+            return True
+    except FileExistsError:
+        return False
+
+
 def _target_path(opts: BackupOptions, dbname: str, partial: bool = False) -> str:
+    """Choose the output file name and reserve its `.part` file (the caller removes it on failure)."""
     out_dir = os.path.abspath(os.path.expanduser(opts.out_dir))
     os.makedirs(out_dir, exist_ok=True)
     ext = ".sql.gz" if opts.gzip else ".sql"
     if opts.filename:
-        return os.path.join(out_dir, os.path.basename(opts.filename))
+        path = os.path.join(out_dir, os.path.basename(opts.filename))
+        if not _reserve(path):
+            raise BackupError(f"The file {path} already exists (or another backup is writing it); "
+                              f"choose another file name.")
+        return path
     base = f"{_UNSAFE_FILENAME.sub('_', dbname)}_{datetime.now():%Y%m%d_%H%M%S}" + ("_partial" if partial else "")
     path, n = os.path.join(out_dir, base + ext), 2
-    while os.path.exists(path) or os.path.exists(path + ".part"):
+    while not _reserve(path):
         path, n = os.path.join(out_dir, f"{base}_{n}{ext}"), n + 1
     return path
 
@@ -1039,6 +1058,7 @@ class _BackupRun:
                 cat, plan, warnings, info = self._plan(conn, version, skipped)
                 path = _target_path(self.opts, self.dbname, info.partial)
                 part = path + ".part"
+                self.rep.emit("file", {"path": path, "part": part})
                 self._write(conn, part, plan, self._header(conn, cat, warnings, info))
             check_cancel(self.cancel)
             conn.commit()
@@ -1101,10 +1121,10 @@ class _BackupRun:
                 if self.opts.mode == "schema":
                     return {r["oid"] for r in relations if r["kind"] == "S"}
                 return {s["oid"] for s in reads["skipped_sequences"]}
-            except errors.UndefinedTable as e:
+            except (errors.UndefinedTable, errors.InvalidSchemaName) as e:
                 conn.rollback()
                 if not retries:
-                    raise BackupError("Tables were dropped or renamed while the backup was starting; "
+                    raise BackupError("Tables or schemas were dropped or renamed while the backup was starting; "
                                       "try again.") from e
                 retries -= 1
 
@@ -1198,7 +1218,8 @@ class _BackupRun:
                 else:
                     out.write(item.sql)
                     done += 1
-                    self.rep.emit("object", {"kind": item.label_kind, "name": name, "objects_done": done})
+                    self.rep.emit("object", {"kind": item.label_kind, "name": name, "objects_done": done,
+                                             "bytes_written": out.size})
         finally:
             out.close()
 
@@ -1234,7 +1255,7 @@ class _BackupRun:
             raise BackupError(f"Table {spec.qname}: {_message(e)}") from e
         out.write("\\.\n" + spec.after)
         self.rows += rows
-        self.rep.emit("table_done", {"name": spec.qname, "rows": rows})
+        self.rep.emit("table_done", {"name": spec.qname, "rows": rows, "bytes_written": out.size})
 
     def _flush(self, out: _Output, buf: bytearray, spec: CopySpec, rows: int, copied: int) -> tuple[int, int]:
         out.write(buf)

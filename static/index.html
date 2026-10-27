@@ -1,17 +1,2183 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PG Backup Studio</title>
-  <style>
-    :root { --bg: #ffffff; --fg: #1f2328; }
-    @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; } }
-    body { margin: 2rem; font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PG Backup Studio</title>
+<style>
+:root {
+  --bg: #f4f6f9; --surface: #ffffff; --surface-2: #f8fafc; --surface-3: #eef2f7;
+  --border: #e2e8f0; --border-strong: #cbd5e1;
+  --fg: #0f172a; --fg-2: #475569; --fg-3: #64748b;
+  --accent: #2563eb; --accent-hover: #1d4ed8; --accent-soft: #eff6ff; --accent-fg: #ffffff;
+  --ok: #15803d; --ok-soft: #dcfce7; --warn: #b45309; --warn-soft: #fef3c7;
+  --danger: #b91c1c; --danger-hover: #991b1b; --danger-soft: #fee2e2; --info-soft: #e0f2fe; --info: #0369a1;
+  --side-bg: #0f172a; --side-fg: #cbd5e1; --side-fg-2: #94a3b8; --side-hover: #1e293b; --side-active: #1e3a8a;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow: 0 1px 3px rgba(15, 23, 42, .08), 0 1px 2px rgba(15, 23, 42, .04);
+  --shadow-lg: 0 20px 40px -8px rgba(15, 23, 42, .25), 0 4px 12px rgba(15, 23, 42, .08);
+  --radius: 8px; --radius-sm: 6px;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1120; --surface: #111827; --surface-2: #0f172a; --surface-3: #1f2937;
+    --border: #1f2937; --border-strong: #334155;
+    --fg: #e5e7eb; --fg-2: #9ca3af; --fg-3: #8b95a5;
+    --accent: #3b82f6; --accent-hover: #60a5fa; --accent-soft: #172554; --accent-fg: #ffffff;
+    --ok: #4ade80; --ok-soft: #052e16; --warn: #fbbf24; --warn-soft: #3b2405;
+    --danger: #f87171; --danger-hover: #fca5a5; --danger-soft: #3f0d0d; --info-soft: #082f49; --info: #7dd3fc;
+    --side-bg: #020617; --side-hover: #111827; --side-active: #1e3a8a;
+    --shadow-lg: 0 20px 40px -8px rgba(0, 0, 0, .6);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1120; --surface: #111827; --surface-2: #0f172a; --surface-3: #1f2937;
+  --border: #1f2937; --border-strong: #334155;
+  --fg: #e5e7eb; --fg-2: #9ca3af; --fg-3: #8b95a5;
+  --accent: #3b82f6; --accent-hover: #60a5fa; --accent-soft: #172554; --accent-fg: #ffffff;
+  --ok: #4ade80; --ok-soft: #052e16; --warn: #fbbf24; --warn-soft: #3b2405;
+  --danger: #f87171; --danger-hover: #fca5a5; --danger-soft: #3f0d0d; --info-soft: #082f49; --info: #7dd3fc;
+  --side-bg: #020617; --side-hover: #111827; --side-active: #1e3a8a;
+  --shadow-lg: 0 20px 40px -8px rgba(0, 0, 0, .6);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.muted { color: var(--fg-2); }
+.subtle { color: var(--fg-3); font-size: 12.5px; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.hidden { display: none !important; }
+.grow { flex: 1; }
+.row { display: flex; align-items: center; gap: 8px; }
+.wrap { flex-wrap: wrap; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+svg.icon { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
+
+/* ---------- shell */
+.app { display: grid; grid-template-columns: 248px 1fr; height: 100vh; }
+.side { background: var(--side-bg); color: var(--side-fg); display: flex; flex-direction: column; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; color: #fff; font-weight: 650;
+  font-size: 15px; letter-spacing: .1px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8); box-shadow: inset 0 1px 0 rgba(255,255,255,.2); }
+.brand-mark svg.icon { stroke: #fff; width: 17px; height: 17px; }
+.brand small { display: block; font-weight: 400; color: var(--side-fg-2); font-size: 11.5px; }
+.side-section { padding: 10px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--side-fg-2); font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+.side-section button { background: none; border: 0; color: var(--side-fg-2); cursor: pointer; padding: 2px 4px;
+  border-radius: 4px; }
+.side-section button:hover { color: #fff; background: var(--side-hover); }
+.servers { overflow-y: auto; padding: 0 8px; flex: 1; min-height: 0; }
+.srv { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; background: none;
+  color: var(--side-fg); border-radius: 6px; cursor: pointer; text-align: left; }
+.srv:hover { background: var(--side-hover); }
+.srv.active { background: var(--side-active); color: #fff; }
+.srv .name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv .host { font-size: 11.5px; color: var(--side-fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv.active .host { color: #bfdbfe; }
+.srv .meta { min-width: 0; flex: 1; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #475569; flex: none; }
+.dot.ok { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18); }
+.dot.err { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.18); }
+.side-add { margin: 6px 8px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px;
+  border: 1px dashed #334155; background: none; color: var(--side-fg-2); cursor: pointer; width: calc(100% - 16px); }
+.side-add:hover { color: #fff; border-color: #475569; background: var(--side-hover); }
+.side-foot { border-top: 1px solid #1e293b; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.side-link { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; color: var(--side-fg);
+  background: none; border: 0; cursor: pointer; width: 100%; text-align: left; }
+.side-link:hover { background: var(--side-hover); color: #fff; text-decoration: none; }
+.side-link .count { margin-left: auto; background: #2563eb; color: #fff; border-radius: 10px; padding: 0 7px;
+  font-size: 11.5px; font-weight: 600; }
+.side-ver { padding: 4px 10px 2px; font-size: 11px; color: #64748b; }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; }
+.crumbs { display: flex; align-items: center; gap: 8px; padding-top: 16px; color: var(--fg-3); font-size: 12.5px; }
+.crumbs b { color: var(--fg-2); font-weight: 550; }
+.title-row { display: flex; align-items: center; gap: 12px; padding: 4px 0 10px; min-height: 44px; }
+.title-row h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -.2px; }
+.tabs { display: flex; gap: 2px; margin-bottom: -1px; overflow-x: auto; }
+.tab { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border: 0; background: none;
+  border-bottom: 2px solid transparent; color: var(--fg-2); cursor: pointer; font-weight: 550; white-space: nowrap; }
+.tab:hover { color: var(--fg); text-decoration: none; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+.tab .count { background: var(--accent); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 11.5px; }
+.content { flex: 1; overflow-y: auto; padding: 24px 28px 48px; min-height: 0; }
+.content-inner { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+/* ---------- building blocks */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.card-h { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.card-h h2 { font-size: 14.5px; font-weight: 650; margin: 0; }
+.card-h .desc { color: var(--fg-3); font-size: 12.5px; }
+.card-b { padding: 16px 18px; }
+.card-f { padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface-2);
+  border-radius: 0 0 var(--radius) var(--radius); display: flex; gap: 8px; align-items: center; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px;
+  background: var(--border); border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
+.stat { background: var(--surface); padding: 14px 18px; }
+.stat .k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--fg-3); font-weight: 600; }
+.stat .v { font-size: 18px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat .s { font-size: 12px; color: var(--fg-3); }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg);
+  font-weight: 550; cursor: pointer; white-space: nowrap; box-shadow: var(--shadow-sm); }
+.btn:hover { background: var(--surface-3); text-decoration: none; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger:hover:not(:disabled) { background: var(--danger-hover); }
+.btn.ghost { border-color: transparent; background: none; box-shadow: none; }
+.btn.ghost:hover { background: var(--surface-3); }
+.btn.sm { height: 28px; padding: 0 9px; font-size: 13px; }
+.btn.icon-only { width: 32px; padding: 0; }
+.btn.sm.icon-only { width: 28px; }
+.btn.lg { height: 38px; padding: 0 18px; font-size: 14.5px; }
+.btn .spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px;
+  font-weight: 600; background: var(--surface-3); color: var(--fg-2); white-space: nowrap; line-height: 18px; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.danger { background: var(--danger-soft); color: var(--danger); }
+.badge.info { background: var(--info-soft); color: var(--info); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field > label, .label { font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
+.field .hint { font-size: 12px; color: var(--fg-3); }
+.input, select.input, textarea.input { height: 34px; padding: 0 10px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface); width: 100%; min-width: 0; }
+textarea.input { height: auto; padding: 8px 10px; resize: vertical; }
+.input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+.input:disabled { background: var(--surface-3); color: var(--fg-3); }
+.input.sm { height: 28px; font-size: 13px; padding: 0 8px; }
+.input.invalid { border-color: var(--danger); }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.form-grid .span-2 { grid-column: span 2; }
+.check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; user-select: none; }
+.check input { margin: 2px 0 0; width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
+.check .t { font-weight: 550; }
+.check .d { display: block; font-size: 12px; color: var(--fg-3); font-weight: 400; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden;
+  background: var(--surface); }
+.seg button { border: 0; background: none; padding: 0 12px; height: 30px; cursor: pointer; color: var(--fg-2);
+  font-weight: 550; border-right: 1px solid var(--border); white-space: nowrap; }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--accent-soft); color: var(--accent); }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+.seg.sm button { height: 26px; padding: 0 9px; font-size: 12.5px; }
+.radio-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.radio-card { border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 14px; cursor: pointer;
+  background: var(--surface); text-align: left; display: flex; flex-direction: column; gap: 3px; }
+.radio-card:hover { border-color: var(--accent); }
+.radio-card.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+.radio-card .t { font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.radio-card .d { font-size: 12.5px; color: var(--fg-2); }
+
+.alert { display: flex; gap: 10px; padding: 11px 14px; border-radius: var(--radius-sm); border: 1px solid;
+  font-size: 13.5px; align-items: flex-start; }
+.alert svg.icon { margin-top: 1px; }
+.alert.info { background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 30%, transparent); color: var(--fg); }
+.alert.info svg.icon { color: var(--info); }
+.alert.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.alert.warn svg.icon { color: var(--warn); }
+.alert.danger { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.alert.danger svg.icon { color: var(--danger); }
+.alert.ok { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.alert.ok svg.icon { color: var(--ok); }
+.alert .body { flex: 1; min-width: 0; }
+.alert .body b { display: block; margin-bottom: 2px; }
+
+/* ---------- tables */
+.table-wrap { overflow-x: auto; }
+table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
+table.t th { position: sticky; top: 0; background: var(--surface-2); font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--fg-3); font-weight: 650; text-align: left; padding: 9px 14px;
+  border-bottom: 1px solid var(--border); white-space: nowrap; z-index: 1; }
+table.t th.sortable { cursor: pointer; user-select: none; }
+table.t th.sortable:hover { color: var(--fg); }
+table.t td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+table.t tr:last-child td { border-bottom: 0; }
+table.t tbody tr:hover td { background: var(--surface-2); }
+table.t tr.large td { background: color-mix(in srgb, var(--warn-soft) 55%, transparent); }
+table.t tr.large:hover td { background: var(--warn-soft); }
+table.t .actions { display: flex; gap: 6px; justify-content: flex-end; }
+.cell-name { font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cell-name span.n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.search { position: relative; }
+.search svg.icon { position: absolute; left: 9px; top: 9px; color: var(--fg-3); width: 15px; height: 15px; }
+.search .input { padding-left: 30px; width: 240px; }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border-strong); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 4px; color: var(--fg-3); background: var(--surface-2); }
+
+.empty { text-align: center; padding: 48px 24px; color: var(--fg-2); }
+.empty .ic { width: 48px; height: 48px; border-radius: 12px; background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center; margin: 0 auto 14px; }
+.empty .ic svg.icon { width: 24px; height: 24px; }
+.empty h3 { margin: 0 0 4px; color: var(--fg); font-size: 16px; }
+.empty p { margin: 0 auto 16px; max-width: 440px; }
+.loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px; color: var(--fg-3); }
+.loading .spin { width: 18px; height: 18px; border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite; }
+.skel { height: 14px; border-radius: 4px; background: linear-gradient(90deg, var(--surface-3), var(--surface-2), var(--surface-3));
+  background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ---------- progress / jobs */
+.bar { height: 8px; background: var(--surface-3); border-radius: 999px; overflow: hidden; position: relative; }
+.bar > i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 999px; transition: width .5s ease; }
+.bar.ok > i { background: var(--ok); }
+.bar.danger > i { background: var(--danger); }
+.bar.warn > i { background: var(--warn); }
+.bar.indet > i { width: 30% !important; animation: indet 1.3s ease-in-out infinite; }
+@keyframes indet { from { left: -30%; } to { left: 100%; } }
+.job { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); }
+.job.open { box-shadow: var(--shadow); border-color: var(--border-strong); }
+.job-h { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 14px 18px; cursor: pointer; }
+.job-ic { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.job-ic.restore { background: color-mix(in srgb, #8b5cf6 15%, transparent); color: #8b5cf6; }
+.job-title { font-weight: 650; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.job-title .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-sub { font-size: 12.5px; color: var(--fg-3); display: flex; gap: 12px; flex-wrap: wrap; margin-top: 2px; }
+.job-prog { padding: 0 18px 14px 68px; display: flex; flex-direction: column; gap: 6px; }
+.job-prog .line { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.job-body { border-top: 1px solid var(--border); padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px 20px; }
+.kv .k { font-size: 11.5px; color: var(--fg-3); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+.kv .v { font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log { background: #0b1020; color: #cbd5e1; border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px;
+  max-height: 300px; overflow: auto; padding: 10px 0; line-height: 1.6; }
+.log div { padding: 0 14px; white-space: pre-wrap; word-break: break-word; }
+.log .t { color: #64748b; margin-right: 10px; display: inline-block; min-width: 52px; text-align: right; }
+.log .error { color: #fca5a5; background: rgba(239, 68, 68, .1); }
+.log .warning { color: #fcd34d; }
+.errlist { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow: auto; }
+.erritem { border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: var(--radius-sm); padding: 8px 12px; background: var(--surface-2); }
+.erritem.warning { border-left-color: var(--warn); }
+.erritem .o { font-weight: 600; font-size: 13px; }
+.erritem pre { margin: 6px 0 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word; color: var(--fg-2); }
+
+/* ---------- overlays */
+.backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, .5); backdrop-filter: blur(2px); display: grid;
+  place-items: center; z-index: 50; padding: 24px; animation: fade .12s ease-out; }
+@keyframes fade { from { opacity: 0; } }
+.modal { background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-lg); width: 520px; max-width: 100%;
+  max-height: calc(100vh - 48px); display: flex; flex-direction: column; animation: pop .14s ease-out; border: 1px solid var(--border); }
+.modal.wide { width: 680px; }
+@keyframes pop { from { transform: translateY(8px) scale(.98); opacity: 0; } }
+.modal-h { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 6px; }
+.modal-h h3 { margin: 0; font-size: 16px; font-weight: 650; }
+.modal-h .sub { color: var(--fg-3); font-size: 13px; margin-top: 2px; }
+.modal-h .x { margin-left: auto; }
+.modal-ic { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--accent-soft); color: var(--accent); }
+.modal-ic.danger { background: var(--danger-soft); color: var(--danger); }
+.modal-ic.warn { background: var(--warn-soft); color: var(--warn); }
+.modal-b { padding: 14px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.modal-f { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end;
+  background: var(--surface-2); border-radius: 0 0 12px 12px; align-items: center; }
+.modal-err { color: var(--danger); font-size: 13px; }
+.toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 60; width: 380px; max-width: calc(100vw - 40px); }
+.toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg); border-left: 4px solid var(--accent);
+  animation: slide .18s ease-out; font-size: 13.5px; }
+.toast.ok { border-left-color: var(--ok); } .toast.ok > svg.icon { color: var(--ok); }
+.toast.err { border-left-color: var(--danger); } .toast.err > svg.icon { color: var(--danger); }
+.toast.warn { border-left-color: var(--warn); } .toast.warn > svg.icon { color: var(--warn); }
+.toast > svg.icon { color: var(--accent); margin-top: 1px; }
+.toast .body { flex: 1; min-width: 0; word-break: break-word; }
+.toast .body b { display: block; }
+.toast button { background: none; border: 0; cursor: pointer; color: var(--fg-3); padding: 0; }
+@keyframes slide { from { transform: translateX(20px); opacity: 0; } }
+.menu { position: fixed; z-index: 55; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); padding: 4px; min-width: 200px; animation: fade .1s; }
+.menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; background: none;
+  border-radius: 5px; cursor: pointer; text-align: left; }
+.menu button:hover:not(:disabled) { background: var(--surface-3); }
+.menu button:disabled { opacity: .45; cursor: not-allowed; }
+.menu button.danger { color: var(--danger); }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+.banner { background: var(--danger); color: #fff; padding: 10px 28px; display: flex; gap: 12px; align-items: center; font-weight: 550; }
+.banner .btn { height: 28px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface); cursor: pointer; font-size: 13px; user-select: none; }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 550; }
+.chip input { display: none; }
+details.adv > summary { cursor: pointer; font-weight: 600; color: var(--fg-2); list-style: none; display: flex; align-items: center; gap: 6px; }
+details.adv > summary::-webkit-details-marker { display: none; }
+details.adv[open] > summary svg.icon { transform: rotate(90deg); }
+details.adv > div { margin-top: 12px; }
+.sticky-side { position: sticky; top: 0; display: flex; flex-direction: column; gap: 16px; }
+.summary-list { display: flex; flex-direction: column; gap: 9px; font-size: 13.5px; }
+.summary-list .r { display: flex; justify-content: space-between; gap: 10px; }
+.summary-list .r span:first-child { color: var(--fg-2); }
+.summary-list .r span:last-child { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.problem { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.problem .m { flex: 1; min-width: 0; font-size: 13px; }
+.order-cell { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.order-cell select { max-width: 260px; }
+.order-cell .input.n { width: 110px; }
+.advice { font-size: 12px; margin-top: 4px; display: flex; gap: 5px; align-items: flex-start; }
+.advice.good { color: var(--ok); } .advice.bad { color: var(--warn); }
+.advice svg.icon { width: 13px; height: 13px; margin-top: 2px; }
+.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; font-weight: 650; color: var(--fg-3); margin: 0 0 8px; }
+
+@media (max-width: 1100px) { .grid-main { grid-template-columns: 1fr; } .sticky-side { position: static; } }
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
+  .side { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .servers { display: flex; flex: 1; overflow-x: auto; padding: 6px; }
+  .side-section, .side-ver { display: none; }
+  .side-foot { flex-direction: row; border: 0; }
+  .grid-2, .form-grid, .radio-cards { grid-template-columns: 1fr; }
+  .form-grid .span-2 { grid-column: auto; }
+  .content, .topbar { padding-left: 16px; padding-right: 16px; }
+}
+</style>
 </head>
 <body>
-  <h1>PG Backup Studio</h1>
-  <p>The user interface is not built yet.</p>
+<div class="app">
+  <aside class="side" aria-label="Servers">
+    <div class="brand"><div class="brand-mark" id="brand-mark"></div><div>PG Backup Studio<small>PostgreSQL backup &amp; restore</small></div></div>
+    <div class="side-section"><span>Servers</span><button type="button" id="side-add-icon" title="Add server" aria-label="Add server"></button></div>
+    <nav class="servers" id="server-list"></nav>
+    <button type="button" class="side-add" id="side-add"></button>
+    <div class="side-foot">
+      <a class="side-link" href="#/activity" id="side-activity"></a>
+      <a class="side-link" href="#/history" id="side-history"></a>
+      <button type="button" class="side-link" id="side-settings"></button>
+      <div class="side-ver" id="side-ver"></div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="banner hidden" id="offline" role="alert"></div>
+    <header class="topbar">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="title-row" id="title-row"></div>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+    </header>
+    <section class="content" id="content"><div class="content-inner" id="view"></div></section>
+  </main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script>
+'use strict';
+
+/* ======================================================================== utilities */
+
+const ICONS = {
+  db: ['M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z', 'M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6', 'M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6'],
+  server: ['M3 4h18v7H3z', 'M3 13h18v7H3z', 'M7 7.5h.01', 'M7 16.5h.01'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  backup: ['M12 3v12', 'M7 10l5 5 5-5', 'M4 19h16'],
+  restore: ['M12 21V9', 'M7 14l5-5 5 5', 'M4 5h16'],
+  activity: ['M3 12h4l3-8 4 16 3-8h4'],
+  history: ['M3 12a9 9 0 1 0 3-6.7', 'M3 4v5h5', 'M12 7v5l3 2'],
+  settings: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'],
+  more: ['M12 6h.01', 'M12 12h.01', 'M12 18h.01'],
+  x: ['M18 6L6 18', 'M6 6l12 12'],
+  check: ['M20 6L9 17l-5-5'],
+  alert: ['M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4', 'M12 17h.01'],
+  info: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 16v-4', 'M12 8h.01'],
+  folder: ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
+  trash: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6', 'M10 11v6', 'M14 11v6'],
+  refresh: ['M21 12a9 9 0 1 1-2.6-6.4', 'M21 4v5h-5'],
+  edit: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z'],
+  copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'],
+  zap: ['M13 2L3 14h9l-1 8 10-12h-9z'],
+  search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'M21 21l-4.3-4.3'],
+  shield: ['M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'],
+  lock: ['M5 11h14v10H5z', 'M8 11V7a4 4 0 0 1 8 0v4'],
+  key: ['M21 2l-2 2', 'M15.5 7.5l3 3L22 7l-3-3', 'M11.4 11.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8z', 'M11.4 11.6L19 4'],
+  play: ['M6 4l14 8-14 8z'],
+  stop: ['M6 6h12v12H6z'],
+  chevron: ['M9 18l6-6-6-6'],
+  clock: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 6v6l4 2'],
+  file: ['M14 3H6v18h12V7z', 'M14 3v4h4'],
+  sun: ['M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z', 'M12 1v2', 'M12 21v2', 'M4.2 4.2l1.4 1.4', 'M18.4 18.4l1.4 1.4', 'M1 12h2', 'M21 12h2', 'M4.2 19.8l1.4-1.4', 'M18.4 5.6l1.4-1.4'],
+  moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
+  link: ['M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7', 'M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7'],
+};
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function icon(name) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of ICONS[name] || []) {
+    const p = document.createElementNS(SVG_NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+/** DOM builder. Text is always set through text nodes, never parsed as HTML (decision 008 §2). */
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else if (k === 'value') node.value = v;
+    else if (k === 'checked' || k === 'disabled' || k === 'selected') node[k] = !!v;
+    else if (k === 'style') node.setAttribute('style', v);
+    else node.setAttribute(k, v === true ? '' : v);
+  }
+  append(node, children);
+  return node;
+}
+function append(node, children) {
+  for (const c of children.flat(Infinity)) {
+    if (c === null || c === undefined || c === false) continue;
+    node.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+function clear(node, ...children) { node.replaceChildren(); return append(node, children); }
+const $ = (id) => document.getElementById(id);
+const enc = encodeURIComponent;
+
+const fmt = {
+  bytes(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let i = 0, v = Number(n);
+    while (Math.abs(v) >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i === 0 ? v.toFixed(0) : v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)) + ' ' + u[i];
+  },
+  num(n) { return n === null || n === undefined ? '—' : Number(n).toLocaleString(); },
+  dur(s) {
+    if (s === null || s === undefined || isNaN(s)) return '—';
+    s = Math.max(0, Math.round(s));
+    if (s < 60) return s + ' s';
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return h ? `${h} h ${String(m).padStart(2, '0')} min` : `${m} min ${r} s`;
+  },
+  date(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return isNaN(d) ? iso : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  },
+  ago(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d)) return '';
+    const s = (Date.now() - d.getTime()) / 1000;
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+    return Math.floor(s / 86400) + ' d ago';
+  },
+  pct(p) { return p === null || p === undefined ? '—' : Math.floor(p) + '%'; },
+  plural(n, one, many) { return `${fmt.num(n)} ${n === 1 ? one : (many || one + 's')}`; },
+  basename(p) { return p ? String(p).split(/[\\/]/).pop() : ''; },
+};
+
+function store(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem('pgbs.' + key);
+    localStorage.setItem('pgbs.' + key, value);
+  } catch (e) { /* private mode: per-viewer conveniences only */ }
+  return null;
+}
+
+/* ======================================================================== API */
+
+class ApiError extends Error {
+  constructor(status, code, message) { super(message); this.status = status; this.code = code; }
+}
+
+let passwordPrompt = null;   // one prompt at a time; concurrent 401s wait on the same promise
+
+/** fetch wrapper: our guard header, JSON both ways, `{error, code}` errors; asks for a password once on 401. */
+async function api(method, path, body, retried) {
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: Object.assign({ 'X-PGBS': '1', 'Accept': 'application/json' }, body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    setOffline(true);
+    throw new ApiError(0, 'offline', 'PG Backup Studio is not running. Start it with "python app.py" and retry.');
+  }
+  setOffline(false);
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (res.ok) return data;
+  const err = new ApiError(res.status, (data && data.code) || 'unexpected', (data && data.error) || `Request failed (${res.status}).`);
+  if (err.code === 'password_required' && !retried) {
+    const sid = serverIdOf(path, body);
+    if (sid) {
+      setConn(sid, null);
+      const ok = await askPassword(sid, err.message);
+      if (ok) return api(method, path, body, true);
+    }
+  }
+  if (err.code === 'password_required') {
+    const sid = serverIdOf(path, body);
+    if (sid) setConn(sid, 'err');
+  }
+  throw err;
+}
+function serverIdOf(path, body) {
+  const m = /^\/api\/servers\/([^/]+)\//.exec(path);
+  if (m && m[1] !== 'test') return decodeURIComponent(m[1]);
+  return body && body.server_id ? body.server_id : null;
+}
+
+function setOffline(on) {
+  const b = $('offline');
+  if (on === !b.classList.contains('hidden')) return;
+  b.classList.toggle('hidden', !on);
+  if (on) {
+    clear(b, icon('alert'), el('span', { class: 'grow', text: 'The PG Backup Studio server is not reachable. Start it with "python app.py".' }),
+      el('button', { class: 'btn sm', type: 'button', onclick: () => location.reload() }, 'Retry'));
+  }
+}
+
+/* ======================================================================== state */
+
+const state = {
+  version: '',
+  servers: [],
+  conn: {},          // server id -> 'ok' | 'err'
+  info: {},          // server id -> server info
+  dbs: {},           // server id -> database rows
+  roles: {},         // server id -> role rows
+  jobs: [],
+  jobDetail: {},     // job id -> {snap, log: [], seq}
+  openJob: null,
+  history: null,
+  settings: null,
+  route: { view: 'home' },
+  backup: null,
+  restore: null,
+  restorePrefill: null,
+  dbSort: { key: 'name', dir: 1 },
+  dbFilter: '',
+  histFilter: { q: '', kind: 'all', status: 'all' },
+};
+
+function server(sid) { return state.servers.find((s) => s.id === sid) || null; }
+function setConn(sid, v) {
+  if (v === null) delete state.conn[sid]; else state.conn[sid] = v;
+  renderServerList();
+}
+function runningJobs() { return state.jobs.filter((j) => j.status === 'running'); }
+
+/* ======================================================================== toasts, modals, menus */
+
+function toast(message, kind = 'info', title) {
+  const ic = { ok: 'check', err: 'alert', warn: 'alert', info: 'info' }[kind] || 'info';
+  const t = el('div', { class: 'toast ' + kind, role: kind === 'err' ? 'alert' : 'status' },
+    icon(ic), el('div', { class: 'body' }, title ? el('b', { text: title }) : null, message),
+    el('button', { type: 'button', 'aria-label': 'Dismiss', onclick: () => t.remove() }, icon('x')));
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), kind === 'err' ? 9000 : 5000);
+}
+function toastError(e, title) {
+  if (e && e.code === 'offline') return;
+  toast(e && e.message ? e.message : String(e), 'err', title);
+}
+
+const modals = [];
+/** In-page modal (never the browser's alert/confirm). Returns {root, body, foot, close, error, busy}. */
+function modal({ title, sub, iconName, tone, wide, body, actions, onClose }) {
+  const err = el('div', { class: 'modal-err grow', role: 'alert' });
+  const foot = el('div', { class: 'modal-f' }, err);
+  const b = el('div', { class: 'modal-b' }, body);
+  const box = el('div', { class: 'modal' + (wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+    el('div', { class: 'modal-h' },
+      iconName ? el('div', { class: 'modal-ic ' + (tone || '') }, icon(iconName)) : null,
+      el('div', null, el('h3', { text: title }), sub ? el('div', { class: 'sub' }, sub) : null),
+      el('button', { class: 'btn ghost sm icon-only x', type: 'button', 'aria-label': 'Close', onclick: () => m.close() }, icon('x'))),
+    b, foot);
+  const root = el('div', { class: 'backdrop', onmousedown: (e) => { if (e.target === root) m.close(); } }, box);
+  const m = {
+    root, body: b, foot,
+    close() {
+      if (!root.isConnected) return;
+      root.remove();
+      modals.splice(modals.indexOf(m), 1);
+      if (onClose) onClose();
+    },
+    error(msg) { err.textContent = msg || ''; },
+  };
+  for (const a of actions || []) foot.appendChild(a);
+  document.body.appendChild(root);
+  modals.push(m);
+  setTimeout(() => {
+    const f = box.querySelector('input:not([type=checkbox]):not([disabled]), select, textarea') || box.querySelector('.modal-f .btn.primary, .modal-f .btn.danger');
+    if (f) f.focus();
+  }, 30);
+  return m;
+}
+
+function busy(btn, on, label) {
+  if (on) {
+    btn._children = Array.from(btn.childNodes);
+    btn.disabled = true;
+    clear(btn, el('span', { class: 'spin' }), label || 'Working…');
+  } else if (btn._children) {
+    btn.disabled = false;
+    clear(btn, btn._children);
+    btn._children = null;
+  }
+}
+
+/** Confirm modal; resolves true/false. `typed` requires the exact text to be typed (drop / recreate). */
+function confirmBox({ title, message, confirmLabel = 'Confirm', danger, typed, extra }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const ok = el('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), type: 'button', disabled: !!typed }, confirmLabel);
+    const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const input = typed ? el('input', { class: 'input mono', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Type the name to confirm' }) : null;
+    if (input) input.addEventListener('input', () => { ok.disabled = input.value !== typed; });
+    const body = [el('div', null, message), extra || null,
+      typed ? el('div', { class: 'field' }, el('label', null, 'Type ', el('span', { class: 'mono', text: typed }), ' to confirm'), input) : null];
+    const m = modal({ title, iconName: danger ? 'alert' : 'info', tone: danger ? 'danger' : '', body, actions: [cancel, ok],
+      onClose: () => { if (!done) resolve(false); } });
+    cancel.onclick = () => m.close();
+    ok.onclick = () => { done = true; m.close(); resolve(true); };
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ok.disabled) ok.click(); });
+  });
+}
+
+let openMenu = null;
+function menu(anchor, items) {
+  closeMenu();
+  const m = el('div', { class: 'menu', role: 'menu' }, items.map((it) => it === '-' ? el('hr') :
+    el('button', { type: 'button', role: 'menuitem', class: it.danger ? 'danger' : '', disabled: it.disabled, title: it.title || null,
+      onclick: () => { closeMenu(); it.action(); } }, icon(it.icon), it.label)));
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  m.style.top = (r.bottom + h + 8 > innerHeight ? r.top - h - 4 : r.bottom + 4) + 'px';
+  openMenu = m;
+  const first = m.querySelector('button:not(:disabled)');
+  if (first) first.focus();
+}
+function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+document.addEventListener('mousedown', (e) => { if (openMenu && !openMenu.contains(e.target)) closeMenu(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (openMenu) closeMenu();
+    else if (modals.length) modals[modals.length - 1].close();
+  } else if (e.key === '/' && !modals.length && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) {
+    const f = document.querySelector('[data-filter]');
+    if (f) { e.preventDefault(); f.focus(); }
+  }
+});
+
+/* ======================================================================== password prompt (decision 008 §4) */
+
+function askPassword(sid, reason) {
+  if (passwordPrompt) return passwordPrompt;
+  const s = server(sid);
+  passwordPrompt = new Promise((resolve) => {
+    let ok = false;
+    const input = el('input', { class: 'input', type: 'password', autocomplete: 'current-password', 'aria-label': 'Password' });
+    const go = el('button', { class: 'btn primary', type: 'button' }, 'Connect');
+    const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const m = modal({
+      title: 'Password required', iconName: 'key',
+      sub: s ? `${s.name} · ${s.user}@${s.host}:${s.port}` : '',
+      body: [
+        /rejected/i.test(reason || '') ? el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body', text: reason })) : null,
+        el('div', { class: 'field' }, el('label', null, 'Password'), input,
+          el('div', { class: 'hint' }, 'Kept in memory until the app stops. It is not saved to disk.')),
+      ],
+      actions: [cancel, go],
+      onClose: () => { passwordPrompt = null; resolve(ok); },
+    });
+    cancel.onclick = () => m.close();
+    const submit = async () => {
+      busy(go, true, 'Connecting…');
+      m.error('');
+      try {
+        const info = await api('POST', `/api/servers/${enc(sid)}/connect`, { password: input.value }, true);
+        state.info[sid] = info;
+        state.conn[sid] = 'ok';
+        ok = true;
+        m.close();
+        renderServerList();
+      } catch (e) {
+        busy(go, false);
+        m.error(e.message);
+        input.select();
+      }
+    };
+    go.onclick = submit;
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  });
+  return passwordPrompt;
+}
+
+/* ======================================================================== shell */
+
+function initShell() {
+  $('brand-mark').appendChild(icon('db'));
+  $('side-add-icon').appendChild(icon('plus'));
+  $('side-add-icon').onclick = () => serverModal(null);
+  append($('side-add'), [icon('plus'), 'Add server']);
+  $('side-add').onclick = () => serverModal(null);
+  $('side-settings').onclick = settingsModal;
+  append($('side-settings'), [icon('settings'), 'Settings']);
+  renderSideLinks();
+}
+function renderSideLinks() {
+  const n = runningJobs().length;
+  clear($('side-activity'), icon('activity'), 'Activity', n ? el('span', { class: 'count', text: String(n) }) : null);
+  clear($('side-history'), icon('history'), 'History');
+  $('side-ver').textContent = state.version ? `Version ${state.version} · 127.0.0.1 only` : '';
+}
+
+function renderServerList() {
+  const list = $('server-list');
+  const current = state.route.sid;
+  if (!state.servers.length) {
+    clear(list, el('div', { style: 'padding: 6px 10px; color: var(--side-fg-2); font-size: 12.5px;', text: 'No servers yet.' }));
+    return;
+  }
+  clear(list, state.servers.map((s) => el('button', {
+    type: 'button', class: 'srv' + (s.id === current ? ' active' : ''), title: `${s.user}@${s.host}:${s.port}`,
+    onclick: () => go(`#/s/${enc(s.id)}/databases`),
+  }, el('span', { class: 'dot ' + (state.conn[s.id] === 'ok' ? 'ok' : state.conn[s.id] === 'err' ? 'err' : '') }),
+  el('span', { class: 'meta' }, el('div', { class: 'name', text: s.name }), el('div', { class: 'host', text: `${s.host}:${s.port}` })))));
+}
+
+function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
+
+/* ======================================================================== router (decision 008 §3) */
+
+function parseHash() {
+  const parts = location.hash.replace(/^#\/?/, '').split('/').map((p) => { try { return decodeURIComponent(p); } catch (e) { return p; } });
+  if (parts[0] === 's' && parts[1]) {
+    const tab = ['databases', 'backup', 'restore'].includes(parts[2]) ? parts[2] : 'databases';
+    return { view: tab, sid: parts[1], db: parts[3] || null };
+  }
+  if (parts[0] === 'activity') return { view: 'activity', job: parts[1] || null };
+  if (parts[0] === 'history') return { view: 'history' };
+  return { view: 'home' };
+}
+
+let routeToken = 0;
+function route() {
+  closeMenu();
+  const r = parseHash();
+  if (r.sid && !server(r.sid)) { toast('That server is no longer saved.', 'warn'); go('#/'); return; }
+  if (r.view === 'home' && state.servers.length) {
+    const last = store('server');
+    const s = server(last) || state.servers[0];
+    location.replace(`#/s/${enc(s.id)}/databases`);
+    return;
+  }
+  if (r.sid) store('server', r.sid);
+  else if (state.route.sid && (r.view === 'activity' || r.view === 'history')) r.sid = state.route.sid;
+  state.route = r;
+  routeToken++;
+  renderServerList();
+  renderHeader();
+  const view = $('view');
+  $('content').scrollTop = 0;
+  ({ home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
+}
+
+function renderHeader() {
+  const r = state.route;
+  const s = r.sid ? server(r.sid) : null;
+  const info = s && state.info[s.id];
+  const crumbs = $('crumbs');
+  const titleRow = $('title-row');
+  const tabs = $('tabs');
+  const tabLink = (view, label, ic, href, count) => el('a', {
+    class: 'tab' + (r.view === view ? ' active' : ''), href, role: 'tab', 'aria-selected': r.view === view ? 'true' : 'false',
+    'aria-disabled': href ? null : 'true',
+  }, icon(ic), label, count ? el('span', { class: 'count', text: String(count) }) : null);
+  const base = s ? `#/s/${enc(s.id)}` : null;
+  const n = runningJobs().length;
+  clear(tabs,
+    tabLink('databases', 'Databases', 'db', base && base + '/databases'),
+    tabLink('backup', 'Backup', 'backup', base && base + '/backup' + (r.view === 'backup' && r.db ? '/' + enc(r.db) : '')),
+    tabLink('restore', 'Restore', 'restore', base && base + '/restore'),
+    tabLink('activity', 'Activity', 'activity', '#/activity', n),
+    tabLink('history', 'History', 'history', '#/history'));
+  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', activity: 'Activity', history: 'History' };
+  if (s) {
+    clear(crumbs, icon('server'), el('b', { text: s.name }), el('span', { class: 'mono', text: `${s.user}@${s.host}:${s.port}` }),
+      info ? el('span', { class: 'badge', text: 'PostgreSQL ' + info.version.split(' ')[0] }) : null,
+      info && info.is_superuser ? el('span', { class: 'badge accent' }, icon('shield'), 'superuser') : null,
+      state.conn[s.id] === 'err' ? el('span', { class: 'badge danger', text: 'not connected' }) : null);
+  } else {
+    clear(crumbs, icon('db'), el('b', { text: 'PG Backup Studio' }));
+  }
+  const actions = [];
+  if (s && r.view === 'databases') {
+    actions.push(el('button', { class: 'btn', type: 'button', onclick: () => serverModal(s) }, icon('edit'), 'Edit server'));
+  }
+  clear(titleRow, el('h1', { text: titles[r.view] || '' }), el('div', { class: 'grow' }), actions);
+  document.title = (titles[r.view] || 'PG Backup Studio') + (s ? ` · ${s.name}` : '') + ' — PG Backup Studio';
+  renderSideLinks();
+}
+
+function loadingView(view, text) { clear(view, el('div', { class: 'card' }, el('div', { class: 'loading' }, el('span', { class: 'spin' }), text || 'Loading…'))); }
+function stale(token) { return token !== routeToken; }
+function errorCard(view, e, retry) {
+  clear(view, el('div', { class: 'card' }, el('div', { class: 'empty' },
+    el('div', { class: 'ic', style: 'background: var(--danger-soft); color: var(--danger);' }, icon('alert')),
+    el('h3', { text: e.code === 'password_required' ? 'Not connected' : 'Something went wrong' }),
+    el('p', { text: e.message }),
+    el('div', { class: 'row', style: 'justify-content:center' },
+      retry ? el('button', { class: 'btn primary', type: 'button', onclick: retry }, icon('refresh'), 'Retry') : null,
+      state.route.sid ? el('button', { class: 'btn', type: 'button', onclick: () => serverModal(server(state.route.sid)) }, icon('edit'), 'Edit server') : null))));
+}
+
+/* ======================================================================== home */
+
+function viewHome(view) {
+  clear(view, el('div', { class: 'card' }, el('div', { class: 'empty', style: 'padding: 72px 24px' },
+    el('div', { class: 'ic' }, icon('db')),
+    el('h3', { text: 'Add your first PostgreSQL server' }),
+    el('p', { text: 'PG Backup Studio reads every object from the system catalogs and writes one plain SQL file. No pg_dump is needed. A read-only login is enough for backups.' }),
+    el('button', { class: 'btn primary lg', type: 'button', onclick: () => serverModal(null) }, icon('plus'), 'Add server'))),
+  el('div', { class: 'grid-2' },
+    featureCard('shield', 'Safe by design', 'Backups run in one read-only snapshot with a lock timeout, and they never write to the source database.'),
+    featureCard('zap', 'Partial backups', 'For large tables, keep only the latest N rows or the structure. Foreign keys are adjusted so the restore succeeds.')));
+}
+function featureCard(ic, t, d) {
+  return el('div', { class: 'card card-b row', style: 'align-items:flex-start; gap: 14px' },
+    el('div', { class: 'job-ic' }, icon(ic)), el('div', null, el('b', { text: t }), el('div', { class: 'muted', text: d })));
+}
+
+/* ======================================================================== server modal */
+
+function serverModal(s) {
+  const editing = !!s;
+  const v = Object.assign({ name: '', host: 'localhost', port: 5432, user: 'postgres', sslmode: 'prefer', maintenance_db: '', remember_password: true }, s || {});
+  const f = {
+    name: el('input', { class: 'input', value: v.name, placeholder: 'e.g. Production replica', autocomplete: 'off' }),
+    host: el('input', { class: 'input', value: v.host, autocomplete: 'off', spellcheck: 'false' }),
+    port: el('input', { class: 'input', value: String(v.port), inputmode: 'numeric' }),
+    user: el('input', { class: 'input', value: v.user, autocomplete: 'off', spellcheck: 'false' }),
+    password: el('input', { class: 'input', type: 'password', autocomplete: 'new-password',
+      placeholder: editing && v.has_password ? '•••••••• saved; leave empty to keep' : '' }),
+    remember: el('input', { type: 'checkbox', checked: v.remember_password !== false }),
+    clearPw: el('input', { type: 'checkbox' }),
+    sslmode: el('select', { class: 'input' }, ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].map((m) => el('option', { value: m, selected: m === v.sslmode }, m))),
+    mdb: el('input', { class: 'input', value: v.maintenance_db || '', placeholder: 'postgres (default)', spellcheck: 'false' }),
+  };
+  const result = el('div');
+  const payload = () => {
+    const p = { name: f.name.value, host: f.host.value, port: f.port.value.trim() === '' ? null : (/^\d+$/.test(f.port.value.trim()) ? Number(f.port.value.trim()) : f.port.value),
+      user: f.user.value, sslmode: f.sslmode.value, maintenance_db: f.mdb.value.trim() || null, remember_password: f.remember.checked };
+    if (editing) p.id = s.id;
+    if (f.password.value !== '') p.password = f.password.value;
+    else if (editing && f.clearPw.checked) p.password = '';
+    return p;
+  };
+  const test = el('button', { class: 'btn', type: 'button' }, icon('zap'), 'Test connection');
+  const save = el('button', { class: 'btn primary', type: 'button' }, editing ? 'Save changes' : 'Add server');
+  const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
+  const del = editing ? el('button', { class: 'btn ghost', type: 'button', style: 'color: var(--danger); margin-right: auto' }, icon('trash'), 'Delete') : null;
+  const syncRemember = () => {
+    clearRow.classList.toggle('hidden', !(editing && v.has_password && f.remember.checked));
+  };
+  const clearRow = el('label', { class: 'check' }, f.clearPw, el('span', null, el('span', { class: 't', text: 'Clear the saved password' })));
+  f.remember.addEventListener('change', syncRemember);
+  const body = [
+    el('div', { class: 'form-grid' },
+      el('div', { class: 'field span-2' }, el('label', null, 'Display name'), f.name),
+      el('div', { class: 'field' }, el('label', null, 'Host'), f.host),
+      el('div', { class: 'field' }, el('label', null, 'Port'), f.port),
+      el('div', { class: 'field' }, el('label', null, 'User'), f.user),
+      el('div', { class: 'field' }, el('label', null, 'Password'), f.password),
+      el('div', { class: 'field span-2' },
+        el('label', { class: 'check' }, f.remember, el('span', null, el('span', { class: 't', text: 'Remember password' }),
+          el('span', { class: 'd', text: 'Saved in plain text in data/servers.json (readable only by your Windows user). When off, you are asked once per app session.' }))),
+        clearRow),
+      el('div', { class: 'field' }, el('label', null, 'SSL mode'), f.sslmode),
+      el('div', { class: 'field' }, el('label', null, 'Maintenance database'), f.mdb, el('div', { class: 'hint', text: 'Used for listing and managing databases.' }))),
+    result,
+  ];
+  const m = modal({ title: editing ? 'Edit server' : 'Add server', sub: editing ? `${s.user}@${s.host}:${s.port}` : 'Connection details for a PostgreSQL server',
+    iconName: 'server', wide: true, body, actions: [del, cancel, test, save].filter(Boolean) });
+  syncRemember();
+  cancel.onclick = () => m.close();
+  test.onclick = async () => {
+    busy(test, true, 'Testing…');
+    m.error('');
+    try {
+      const r = await api('POST', '/api/servers/test', payload());
+      clear(result, r.ok
+        ? el('div', { class: 'alert ok' }, icon('check'), el('div', { class: 'body' }, el('b', { text: 'Connection succeeded' }),
+          `PostgreSQL ${r.version} · logged in as ${r.user}${r.is_superuser ? ' (superuser)' : ''}`))
+        : el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'Connection failed' }), r.error)));
+    } catch (e) { m.error(e.message); }
+    busy(test, false);
+  };
+  save.onclick = async () => {
+    busy(save, true, 'Saving…');
+    m.error('');
+    try {
+      const rec = await api('POST', '/api/servers', payload());
+      await loadServers();
+      delete state.info[rec.id]; delete state.dbs[rec.id]; delete state.conn[rec.id];
+      m.close();
+      toast(`${rec.name} ${editing ? 'updated' : 'added'}.`, 'ok');
+      go(`#/s/${enc(rec.id)}/databases`);
+    } catch (e) { busy(save, false); m.error(e.message); }
+  };
+  if (del) {
+    del.onclick = async () => {
+      const yes = await confirmBox({ title: `Delete ${s.name}?`, danger: true, confirmLabel: 'Delete server',
+        message: 'The saved connection and its remembered backup settings are removed. Backup files and history are kept.' });
+      if (!yes) return;
+      try {
+        await api('DELETE', `/api/servers/${enc(s.id)}`);
+        m.close();
+        await loadServers();
+        toast(`${s.name} deleted.`, 'ok');
+        go('#/');
+      } catch (e) { toastError(e); }
+    };
+  }
+}
+
+async function loadServers() {
+  state.servers = await api('GET', '/api/servers');
+  for (const s of state.servers) if (s.password_cached && !state.conn[s.id]) state.conn[s.id] = 'ok';
+  renderServerList();
+}
+
+/* ======================================================================== settings modal */
+
+async function settingsModal() {
+  let s;
+  try { s = await api('GET', '/api/settings'); } catch (e) { toastError(e); return; }
+  const f = {
+    out: el('input', { class: 'input mono', value: s.output_dir || '' }),
+    mb: el('input', { class: 'input', value: String(s.large_table_mb), inputmode: 'numeric' }),
+    rows: el('input', { class: 'input', value: String(s.large_table_rows), inputmode: 'numeric' }),
+    hist: el('input', { class: 'input', value: String(s.history_limit), inputmode: 'numeric' }),
+  };
+  const theme = store('theme') || 'auto';
+  const themeSeg = el('div', { class: 'seg' });
+  const drawTheme = (cur) => clear(themeSeg, [['auto', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([k, label]) =>
+    el('button', { type: 'button', class: k === cur ? 'on' : '', onclick: () => { applyTheme(k); drawTheme(k); } }, label)));
+  drawTheme(theme);
+  const save = el('button', { class: 'btn primary', type: 'button' }, 'Save settings');
+  const cancel = el('button', { class: 'btn', type: 'button' }, 'Close');
+  const n = (x) => (/^\s*\d+(\.\d+)?\s*$/.test(x.value) ? Number(x.value) : x.value);
+  const m = modal({ title: 'Settings', iconName: 'settings', sub: 'Saved in data/settings.json',
+    body: [
+      el('div', { class: 'field' }, el('label', null, 'Default backup folder'), f.out, el('div', { class: 'hint', text: 'The last folder a backup succeeded in becomes the default.' })),
+      el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, 'Large table: size (MB)'), f.mb),
+        el('div', { class: 'field' }, el('label', null, 'Large table: estimated rows'), f.rows),
+        el('div', { class: 'field' }, el('label', null, 'History entries kept'), f.hist, el('div', { class: 'hint', text: 'Between 50 and 100,000. Files are never deleted by trimming.' })),
+        el('div', { class: 'field' }, el('label', null, 'Appearance'), themeSeg)),
+    ],
+    actions: [cancel, save] });
+  cancel.onclick = () => m.close();
+  save.onclick = async () => {
+    busy(save, true, 'Saving…');
+    m.error('');
+    try {
+      state.settings = await api('POST', '/api/settings', { output_dir: f.out.value, large_table_mb: n(f.mb), large_table_rows: n(f.rows), history_limit: n(f.hist) });
+      m.close();
+      toast('Settings saved.', 'ok');
+    } catch (e) { busy(save, false); m.error(e.message); }
+  };
+}
+function applyTheme(t) {
+  store('theme', t);
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+}
+
+/* ======================================================================== databases */
+
+async function loadDatabases(sid) {
+  const [info, dbs] = await Promise.all([
+    api('GET', `/api/servers/${enc(sid)}/info`),
+    api('GET', `/api/servers/${enc(sid)}/databases`),
+  ]);
+  state.info[sid] = info;
+  state.dbs[sid] = dbs;
+  setConn(sid, 'ok');
+  return dbs;
+}
+
+async function viewDatabases(view, token) {
+  const sid = state.route.sid;
+  if (!state.dbs[sid]) loadingView(view, 'Connecting to the server…');
+  else drawDatabases(view);
+  try {
+    await loadDatabases(sid);
+  } catch (e) {
+    if (stale(token)) return;
+    if (e.code !== 'password_required') setConn(sid, 'err');
+    errorCard(view, e, () => route());
+    renderHeader();
+    return;
+  }
+  if (stale(token)) return;
+  renderHeader();
+  drawDatabases(view);
+}
+
+function drawDatabases(view) {
+  const sid = state.route.sid;
+  const s = server(sid);
+  const info = state.info[sid] || {};
+  const rows = state.dbs[sid] || [];
+  const total = rows.reduce((a, r) => a + (r.size || 0), 0);
+  const conns = rows.reduce((a, r) => a + (r.connections || 0), 0);
+  const stats = el('div', { class: 'stats' },
+    statBox('Server', info.version ? 'PostgreSQL ' + info.version.split(' ')[0] : '—', `${s.host}:${s.port} · SSL ${s.sslmode}`),
+    statBox('Logged in as', info.user || s.user, info.is_superuser ? 'Superuser' : info.can_create_db ? 'Can create databases' : 'Regular role'),
+    statBox('Databases', fmt.num(rows.length), 'templates not shown'),
+    statBox('Total size', fmt.bytes(total), rows.some((r) => r.size === null) ? 'some sizes hidden (no CONNECT)' : 'all databases'),
+    statBox('Sessions', fmt.num(conns), 'other connections'));
+
+  const filter = el('input', { class: 'input', placeholder: 'Filter databases', value: state.dbFilter, 'data-filter': '1', 'aria-label': 'Filter databases' });
+  const tbody = el('tbody');
+  const head = el('thead');
+  const drawRows = () => {
+    const q = state.dbFilter.toLowerCase();
+    const { key, dir } = state.dbSort;
+    const list = rows.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.owner || '').toLowerCase().includes(q))
+      .sort((a, b) => {
+        const x = a[key], y = b[key];
+        if (x === y) return a.name.localeCompare(b.name);
+        if (x === null || x === undefined) return 1;
+        if (y === null || y === undefined) return -1;
+        return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * dir;
+      });
+    clear(head, el('tr', null, [['name', 'Name'], ['size', 'Size', 'num'], ['owner', 'Owner'], ['encoding', 'Encoding'], ['collation', 'Collation'], ['connections', 'Sessions', 'num']]
+      .map(([k, label, cls]) => el('th', { class: 'sortable ' + (cls || ''), onclick: () => { state.dbSort = { key: k, dir: state.dbSort.key === k ? -state.dbSort.dir : (k === 'size' || k === 'connections' ? -1 : 1) }; drawRows(); } },
+        label, state.dbSort.key === k ? (state.dbSort.dir > 0 ? ' ↑' : ' ↓') : '')), el('th', { class: 'num' }, 'Actions')));
+    if (!list.length) {
+      clear(tbody, el('tr', null, el('td', { colspan: '7' }, el('div', { class: 'empty', style: 'padding: 28px' },
+        el('p', { text: rows.length ? 'No database matches the filter.' : 'This server has no databases besides the templates.' })))));
+      return;
+    }
+    clear(tbody, list.map((r) => dbRow(sid, r, info)));
+  };
+  filter.addEventListener('input', () => { state.dbFilter = filter.value; drawRows(); });
+  drawRows();
+  const createBtn = el('button', { class: 'btn primary', type: 'button', onclick: () => createDbModal(sid, null),
+    disabled: info.can_create_db === false, title: info.can_create_db === false ? 'Your role cannot create databases.' : null }, icon('plus'), 'Create database');
+  clear(view, stats, el('div', { class: 'card' },
+    el('div', { class: 'toolbar' },
+      el('div', { class: 'search' }, icon('search'), filter),
+      el('span', { class: 'subtle' }, 'Press ', el('kbd', { text: '/' }), ' to filter'),
+      el('div', { class: 'grow' }),
+      el('button', { class: 'btn', type: 'button', onclick: () => route(), title: 'Refresh' }, icon('refresh'), 'Refresh'),
+      createBtn),
+    el('div', { class: 'table-wrap' }, el('table', { class: 't' }, head, tbody))));
+}
+function statBox(k, v, s) { return el('div', { class: 'stat' }, el('div', { class: 'k', text: k }), el('div', { class: 'v', text: v, title: v }), el('div', { class: 's', text: s })); }
+
+function dbRow(sid, r, info) {
+  const slash = r.name.includes('/');
+  const why = slash ? 'Names containing "/" cannot be used in this action.' : null;
+  const busyJobs = r.busy || [];
+  const more = el('button', { class: 'btn sm icon-only ghost', type: 'button', 'aria-label': `More actions for ${r.name}`, title: 'More actions' }, icon('more'));
+  more.onclick = () => menu(more, [
+    { icon: 'edit', label: 'Rename…', disabled: slash || r.protected || busyJobs.length, title: why || (r.protected ? 'Protected database' : null), action: () => renameDbModal(sid, r) },
+    { icon: 'copy', label: 'Clone…', disabled: slash || info.can_create_db === false, title: why, action: () => createDbModal(sid, r) },
+    { icon: 'zap', label: 'End other sessions…', disabled: slash || !r.connections || busyJobs.length, title: why, action: () => killDb(sid, r) },
+    '-',
+    { icon: 'trash', label: 'Drop database…', danger: true, disabled: slash || r.protected || busyJobs.length, title: why || (r.protected ? 'Template or maintenance database' : null), action: () => dropDbModal(sid, r) },
+  ]);
+  return el('tr', null,
+    el('td', null, el('div', { class: 'cell-name' }, icon('db'), el('span', { class: 'n', text: r.name, title: r.name }),
+      r.protected ? el('span', { class: 'badge', title: 'Template or maintenance database: cannot be dropped or renamed' }, icon('lock'), 'protected') : null,
+      busyJobs.length ? el('a', { class: 'badge info', href: `#/activity/${enc(busyJobs[0])}` }, 'job running') : null,
+      r.allow_connections === false ? el('span', { class: 'badge warn', text: 'connections disabled' }) : null)),
+    el('td', { class: 'num', title: r.size === null ? 'No CONNECT privilege' : fmt.num(r.size) + ' bytes' }, r.size === null ? '—' : fmt.bytes(r.size)),
+    el('td', { text: r.owner }),
+    el('td', { text: r.encoding }),
+    el('td', { class: 'subtle', text: r.collation || '' }),
+    el('td', { class: 'num' }, r.connections ? el('span', { class: 'badge ' + (r.connections > 10 ? 'warn' : '') }, fmt.num(r.connections)) : el('span', { class: 'subtle', text: '0' })),
+    el('td', null, el('div', { class: 'actions' },
+      el('a', { class: 'btn sm', href: `#/s/${enc(sid)}/backup/${enc(r.name)}` }, icon('backup'), 'Backup'),
+      el('button', { class: 'btn sm', type: 'button', onclick: () => { state.restorePrefill = { target: r.name }; go(`#/s/${enc(sid)}/restore`); } }, icon('restore'), 'Restore'),
+      more)));
+}
+
+async function rolesOf(sid) {
+  if (!state.roles[sid]) state.roles[sid] = await api('GET', `/api/servers/${enc(sid)}/roles`);
+  return state.roles[sid];
+}
+function roleSelect(roles, current, emptyLabel) {
+  return el('select', { class: 'input' }, el('option', { value: '' }, emptyLabel || 'Default (me)'),
+    roles.map((r) => el('option', { value: r.name, selected: r.name === current }, r.name + (r.superuser ? ' (superuser)' : r.can_login ? '' : ' (no login)'))));
+}
+
+async function sessionCount(sid, name) {
+  try { return (await api('GET', `/api/servers/${enc(sid)}/databases/${enc(name)}/sessions`)).sessions; } catch (e) { return null; }
+}
+
+async function createDbModal(sid, source) {
+  let roles = [], templates = [];
+  try {
+    [roles, templates] = await Promise.all([rolesOf(sid), source ? Promise.resolve([]) : api('GET', `/api/servers/${enc(sid)}/templates`)]);
+  } catch (e) { toastError(e); return; }
+  const name = el('input', { class: 'input mono', value: source ? source.name + '_copy' : '', autocomplete: 'off', spellcheck: 'false' });
+  const owner = roleSelect(roles, '', 'Default (current user)');
+  const tpl = el('select', { class: 'input' }, el('option', { value: '' }, 'Server default (template1)'), templates.map((t) => el('option', { value: t }, t)));
+  const encSel = el('select', { class: 'input' }, el('option', { value: '' }, 'Server default'), ['UTF8', 'SQL_ASCII', 'LATIN1', 'WIN1252', 'EUC_JP'].map((x) => el('option', { value: x }, x)));
+  const warn = el('div');
+  const ok = el('button', { class: 'btn primary', type: 'button' }, source ? 'Clone database' : 'Create database');
+  const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
+  const body = [el('div', { class: 'form-grid' },
+    el('div', { class: 'field span-2' }, el('label', null, 'New database name'), name, el('div', { class: 'hint', text: 'Up to 63 bytes. Any characters are allowed; names are quoted.' })),
+    el('div', { class: source ? 'field span-2' : 'field' }, el('label', null, 'Owner'), owner),
+    source ? null : el('div', { class: 'field' }, el('label', null, 'Template'), tpl),
+    source ? null : el('div', { class: 'field' }, el('label', null, 'Encoding'), encSel, el('div', { class: 'hint', text: 'A different encoding needs template0.' }))),
+  warn];
+  const m = modal({ title: source ? `Clone ${source.name}` : 'Create database', iconName: source ? 'copy' : 'db',
+    sub: source ? 'CREATE DATABASE … TEMPLATE. Other sessions on the source are ended first.' : server(sid).name, body, actions: [cancel, ok] });
+  if (source) {
+    sessionCount(sid, source.name).then((n) => {
+      if (n) clear(warn, el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body' },
+        el('b', { text: `${fmt.plural(n, 'session')} connected to ${source.name}` }), 'They are ended so PostgreSQL can copy the database. Applications may need to reconnect.')));
+    });
+  }
+  cancel.onclick = () => m.close();
+  const submit = async () => {
+    busy(ok, true, source ? 'Cloning…' : 'Creating…');
+    m.error('');
+    try {
+      const b = source ? { name: name.value, clone_from: source.name, owner: owner.value || null }
+        : { name: name.value, owner: owner.value || null, template: tpl.value || null, encoding: encSel.value || null };
+      const row = await api('POST', `/api/servers/${enc(sid)}/databases`, b);
+      m.close();
+      toast(`Database ${row.name} ${source ? 'cloned from ' + source.name : 'created'}.`, 'ok');
+      route();
+    } catch (e) { busy(ok, false); m.error(e.message); }
+  };
+  ok.onclick = submit;
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+}
+
+async function renameDbModal(sid, r) {
+  const name = el('input', { class: 'input mono', value: r.name, autocomplete: 'off', spellcheck: 'false' });
+  const ok = el('button', { class: 'btn primary', type: 'button' }, 'Rename');
+  const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
+  const warn = el('div');
+  const m = modal({ title: `Rename ${r.name}`, iconName: 'edit', sub: 'Other sessions on this database are ended first.',
+    body: [el('div', { class: 'field' }, el('label', null, 'New name'), name), warn], actions: [cancel, ok] });
+  name.select();
+  sessionCount(sid, r.name).then((n) => {
+    if (n) clear(warn, el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: `${fmt.plural(n, 'session')} will be ended.` })));
+  });
+  cancel.onclick = () => m.close();
+  const submit = async () => {
+    busy(ok, true, 'Renaming…');
+    m.error('');
+    try {
+      const row = await api('POST', `/api/servers/${enc(sid)}/databases/${enc(r.name)}/rename`, { new_name: name.value });
+      m.close();
+      toast(`${r.name} renamed to ${row.name}.`, 'ok');
+      route();
+    } catch (e) { busy(ok, false); m.error(e.message); }
+  };
+  ok.onclick = submit;
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+}
+
+async function dropDbModal(sid, r) {
+  const n = await sessionCount(sid, r.name);
+  const yes = await confirmBox({
+    title: `Drop database ${r.name}?`, danger: true, confirmLabel: 'Drop database', typed: r.name,
+    message: el('div', { class: 'stack', style: 'gap: 8px' },
+      el('div', null, 'This permanently deletes the database and all its data. It cannot be undone.'),
+      n ? el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: `${fmt.plural(n, 'session')} will be ended first.` })) : null,
+      el('div', { class: 'subtle', text: 'Its remembered backup settings are removed too. Backup files are kept.' })),
+  });
+  if (!yes) return;
+  try {
+    const res = await api('DELETE', `/api/servers/${enc(sid)}/databases/${enc(r.name)}`, { confirm: r.name });
+    toast(`Database ${r.name} dropped${res.terminated ? ` (${fmt.plural(res.terminated, 'session')} ended)` : ''}.`, 'ok');
+    route();
+  } catch (e) { toastError(e, `Could not drop ${r.name}`); }
+}
+
+async function killDb(sid, r) {
+  const yes = await confirmBox({ title: `End sessions on ${r.name}?`, confirmLabel: 'End sessions', danger: true,
+    message: `Every other session connected to ${r.name} (${fmt.plural(r.connections, 'session')} at the last refresh) is terminated with pg_terminate_backend. Open transactions are rolled back.` });
+  if (!yes) return;
+  try {
+    const res = await api('POST', `/api/servers/${enc(sid)}/databases/${enc(r.name)}/kill`);
+    toast(`${fmt.plural(res.terminated, 'session')} ended${res.failed ? `; ${res.failed} could not be ended (needs superuser or the same role)` : ''}.`, res.failed ? 'warn' : 'ok');
+    route();
+  } catch (e) { toastError(e); }
+}
+
+/* ======================================================================== backup */
+
+const tkey = (schema, table) => schema + '\u0000' + table;
+
+function defaultBackup(sid, dbName, settings) {
+  return { sid, db: dbName, schemasAll: null, schemas: null, mode: 'full', privileges: true, gzip: false,
+    out_dir: (settings && settings.output_dir) || '~/pg_backups', filename: '', lock_timeout_s: 10, speed_limit_mb_s: '',
+    opts: new Map(), check: null, checkKey: null, checking: false, checkError: null, profileSavedAt: null,
+    filter: '', largeOnly: null, loaded: false };
+}
+
+async function viewBackup(view, token) {
+  const sid = state.route.sid;
+  let dbs = state.dbs[sid];
+  if (!dbs) {
+    loadingView(view, 'Connecting to the server…');
+    try { dbs = await loadDatabases(sid); } catch (e) { if (!stale(token)) errorCard(view, e, () => route()); return; }
+    if (stale(token)) return;
+    renderHeader();
+  }
+  const dbName = state.route.db;
+  if (!dbName) { drawBackupPicker(view, sid, dbs); return; }
+  if (!state.backup || state.backup.sid !== sid || state.backup.db !== dbName) {
+    loadingView(view, `Reading ${dbName}…`);
+    let schemas, profile, settings;
+    try {
+      [schemas, profile, settings] = await Promise.all([
+        api('GET', `/api/servers/${enc(sid)}/databases/${enc(dbName)}/schemas`),
+        api('GET', `/api/servers/${enc(sid)}/databases/${enc(dbName)}/profile`),
+        api('GET', '/api/settings'),
+      ]);
+    } catch (e) { if (!stale(token)) errorCard(view, e, () => route()); return; }
+    if (stale(token)) return;
+    state.settings = settings;
+    const b = defaultBackup(sid, dbName, settings);
+    b.schemasAll = schemas;
+    applyProfile(b, profile.profile);
+    b.loaded = true;
+    state.backup = b;
+    drawBackup(view);
+    runCheck();
+  } else {
+    drawBackup(view);
+  }
+}
+
+function applyProfile(b, profile) {
+  if (!profile) { b.schemas = new Set(b.schemasAll); return; }
+  const o = profile.options || {};
+  b.profileSavedAt = profile.saved_at;
+  b.mode = o.mode || 'full';
+  b.privileges = o.privileges !== false;
+  b.gzip = !!o.gzip;
+  if (o.out_dir) b.out_dir = o.out_dir;
+  if (o.lock_timeout_s !== undefined && o.lock_timeout_s !== null) b.lock_timeout_s = o.lock_timeout_s;
+  b.speed_limit_mb_s = o.speed_limit_mb_s || '';
+  b.schemas = new Set(o.schemas ? o.schemas.filter((s) => b.schemasAll.includes(s)) : b.schemasAll);
+  for (const t of o.tables || []) b.opts.set(tkey(t.schema, t.table), { data: t.data, order_by: t.order_by || null, limit: t.limit || 1000 });
+}
+
+function drawBackupPicker(view, sid, dbs) {
+  const list = dbs;
+  clear(view, el('div', { class: 'card' },
+    el('div', { class: 'card-h' }, el('h2', { text: 'Choose a database' }), el('span', { class: 'desc', text: 'The pre-backup check runs as soon as you pick one.' })),
+    list.length ? el('div', { class: 'table-wrap' }, el('table', { class: 't' },
+      el('thead', null, el('tr', null, el('th', null, 'Database'), el('th', { class: 'num' }, 'Size'), el('th', null, 'Owner'), el('th'))),
+      el('tbody', null, list.map((d) => el('tr', null,
+        el('td', null, el('div', { class: 'cell-name' }, icon('db'), el('span', { class: 'n', text: d.name }))),
+        el('td', { class: 'num' }, d.size === null ? '—' : fmt.bytes(d.size)),
+        el('td', { text: d.owner }),
+        el('td', null, el('div', { class: 'actions' }, el('a', { class: 'btn sm primary', href: `#/s/${enc(sid)}/backup/${enc(d.name)}` }, 'Select', icon('chevron'))))))))) :
+      el('div', { class: 'empty' }, el('p', { text: 'No databases on this server.' }))));
+}
+
+function backupRequestOptions(b) {
+  const allSchemas = b.schemas.size === b.schemasAll.length;
+  const tables = [];
+  for (const [k, o] of b.opts) {
+    if (o.data === 'full') continue;
+    const [schema, table] = k.split('\u0000');
+    tables.push(o.data === 'latest' ? { schema, table, data: 'latest', order_by: o.order_by, limit: Number(o.limit) } : { schema, table, data: o.data });
+  }
+  return { schemas: allSchemas ? null : b.schemasAll.filter((s) => b.schemas.has(s)), mode: b.mode, tables };
+}
+function checkKeyOf(b) { return JSON.stringify(backupRequestOptions(b)); }
+function checkIsStale(b) { return !b.check || b.checkKey !== checkKeyOf(b); }
+
+async function runCheck() {
+  const b = state.backup;
+  if (!b) return null;
+  const req = backupRequestOptions(b);
+  if (req.schemas && !req.schemas.length) { b.check = null; b.checkError = 'Select at least one schema.'; refreshBackup(); return null; }
+  const key = JSON.stringify(req);
+  b.checking = true;
+  b.checkError = null;
+  refreshBackup();
+  try {
+    const res = await api('POST', `/api/servers/${enc(b.sid)}/databases/${enc(b.db)}/check`, req);
+    if (state.backup !== b) return null;
+    b.check = res;
+    b.checkKey = key;
+    for (const t of res.tables) {
+      const k = tkey(t.schema, t.name);
+      const cur = b.opts.get(k);
+      b.opts.set(k, { data: t.option.data, order_by: (cur && cur.order_by) || t.option.order_by || t.default_order_column, limit: t.option.limit || 1000 });
+    }
+    if (b.largeOnly === null) b.largeOnly = res.tables.length > 50 && res.tables.some((t) => t.large);
+    if (res.ignored_options && res.ignored_options.length) {
+      toast(`Saved options for ${res.ignored_options.length} table(s) were ignored because the tables no longer exist: ${res.ignored_options.join(', ')}`, 'warn');
+    }
+  } catch (e) {
+    if (state.backup !== b) return null;
+    b.checkError = e.message;
+  }
+  b.checking = false;
+  refreshBackup();
+  return b.check;
+}
+
+let backupView = null;
+function refreshBackup() { if (backupView && backupView.isConnected && state.route.view === 'backup') drawBackup(backupView); }
+
+function drawBackup(view) {
+  backupView = view;
+  const b = state.backup;
+  const s = server(b.sid);
+  const scrollY = $('content').scrollTop;
+  const left = el('div', { class: 'stack', style: 'gap: 20px; min-width: 0' });
+  const right = el('div', { class: 'sticky-side' });
+
+  const changed = () => { refreshBackup(); };
+
+  // header strip
+  left.appendChild(el('div', { class: 'card card-b row wrap', style: 'gap: 14px' },
+    el('div', { class: 'job-ic' }, icon('db')),
+    el('div', { class: 'grow', style: 'min-width: 200px' }, el('div', { style: 'font-weight: 650; font-size: 15px', text: b.db }),
+      el('div', { class: 'subtle', text: `${s.name} · ${s.host}:${s.port}` })),
+    b.profileSavedAt ? el('span', { class: 'badge accent', title: 'Options from the last successful backup of this database' }, icon('history'), `Saved settings from ${fmt.date(b.profileSavedAt)}`) : el('span', { class: 'badge', text: 'Default settings' }),
+    b.profileSavedAt ? el('button', { class: 'btn sm', type: 'button', onclick: resetProfile }, 'Reset to defaults') : null,
+    el('a', { class: 'btn sm ghost', href: `#/s/${enc(b.sid)}/backup` }, 'Change database')));
+
+  // what to back up
+  const modeSeg = el('div', { class: 'radio-cards' }, [['full', 'Full', 'Structure and data'], ['schema', 'Schema only', 'Structure, no rows'], ['data', 'Data only', 'Rows for existing tables']].map(([k, t, d]) =>
+    el('button', { type: 'button', class: 'radio-card' + (b.mode === k ? ' on' : ''), onclick: () => { b.mode = k; changed(); } },
+      el('span', { class: 't' }, t), el('span', { class: 'd', text: d }))));
+  const allOn = b.schemas.size === b.schemasAll.length;
+  const schemaChips = el('div', { class: 'chips' }, b.schemasAll.map((sc) => el('label', { class: 'chip' + (b.schemas.has(sc) ? ' on' : '') },
+    el('input', { type: 'checkbox', checked: b.schemas.has(sc), onchange: (e) => { if (e.target.checked) b.schemas.add(sc); else b.schemas.delete(sc); changed(); } }),
+    b.schemas.has(sc) ? icon('check') : null, el('span', { text: sc }))));
+  left.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'card-h' }, el('h2', { text: 'What to back up' })),
+    el('div', { class: 'card-b stack', style: 'gap: 18px' },
+      el('div', null, el('div', { class: 'section-title', text: 'Mode' }), modeSeg),
+      el('div', null, el('div', { class: 'row', style: 'margin-bottom: 8px' }, el('div', { class: 'section-title', style: 'margin: 0', text: `Schemas (${b.schemas.size} of ${b.schemasAll.length})` }), el('div', { class: 'grow' }),
+        el('button', { class: 'btn sm ghost', type: 'button', onclick: () => { b.schemas = new Set(allOn ? [] : b.schemasAll); changed(); } }, allOn ? 'Select none' : 'Select all')),
+      b.schemasAll.length ? schemaChips : el('div', { class: 'subtle', text: 'This database has no user schemas.' })),
+      el('div', { class: 'grid-2', style: 'gap: 12px' },
+        el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: b.privileges, onchange: (e) => { b.privileges = e.target.checked; } }),
+          el('span', null, el('span', { class: 't', text: 'Include owners and grants' }), el('span', { class: 'd', text: 'Turn off to restore as a different user without OWNER errors.' }))),
+        el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: b.gzip, onchange: (e) => { b.gzip = e.target.checked; changed(); } }),
+          el('span', null, el('span', { class: 't', text: 'Compress with gzip' }), el('span', { class: 'd', text: 'Writes .sql.gz; usually 5–10× smaller.' })))))));
+
+  // output + advanced
+  const out = el('input', { class: 'input mono', value: b.out_dir, onchange: (e) => { b.out_dir = e.target.value; } });
+  const fname = el('input', { class: 'input mono', value: b.filename, placeholder: `${b.db}_YYYYMMDD_HHMMSS${b.gzip ? '.sql.gz' : '.sql'}`, onchange: (e) => { b.filename = e.target.value; } });
+  const lockT = el('input', { class: 'input', value: String(b.lock_timeout_s), inputmode: 'decimal', onchange: (e) => { b.lock_timeout_s = e.target.value; } });
+  const speed = el('input', { class: 'input', value: String(b.speed_limit_mb_s || ''), placeholder: 'No limit', inputmode: 'decimal', onchange: (e) => { b.speed_limit_mb_s = e.target.value; } });
+  left.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'card-h' }, el('h2', { text: 'Output' })),
+    el('div', { class: 'card-b stack' },
+      el('div', { class: 'field' }, el('label', null, 'Folder on this PC'), out),
+      el('details', { class: 'adv' }, el('summary', null, icon('chevron'), 'Advanced: file name, lock timeout, speed limit'),
+        el('div', { class: 'form-grid' },
+          el('div', { class: 'field span-2' }, el('label', null, 'File name'), fname, el('div', { class: 'hint', text: 'Leave empty for the automatic name. An existing file is never overwritten.' })),
+          el('div', { class: 'field' }, el('label', null, 'Lock timeout (seconds)'), lockT, el('div', { class: 'hint', text: 'Fails cleanly instead of waiting behind DDL.' })),
+          el('div', { class: 'field' }, el('label', null, 'Speed limit (MB/s)'), speed, el('div', { class: 'hint', text: 'Throttles COPY to reduce load on the server.' })))))));
+
+  // pre-check
+  left.appendChild(precheckCard(b));
+  left.appendChild(tablesCard(b));
+
+  // summary side
+  right.appendChild(summaryCard(b));
+  clear(view, el('div', { class: 'grid-main' }, left, right));
+  $('content').scrollTop = scrollY;
+}
+
+async function resetProfile() {
+  const b = state.backup;
+  const yes = await confirmBox({ title: 'Reset to defaults?', message: `The saved backup settings for ${b.db} are deleted, and the form returns to the defaults.`, confirmLabel: 'Reset' });
+  if (!yes) return;
+  try {
+    await api('DELETE', `/api/servers/${enc(b.sid)}/databases/${enc(b.db)}/profile`);
+    const fresh = defaultBackup(b.sid, b.db, state.settings);
+    fresh.schemasAll = b.schemasAll;
+    fresh.schemas = new Set(b.schemasAll);
+    fresh.loaded = true;
+    state.backup = fresh;
+    toast('Backup settings reset to defaults.', 'ok');
+    refreshBackup();
+    runCheck();
+  } catch (e) { toastError(e); }
+}
+
+function precheckCard(b) {
+  const c = b.check;
+  const isStale = checkIsStale(b);
+  const head = el('div', { class: 'card-h' }, el('h2', { text: 'Pre-backup check' }),
+    b.checking ? el('span', { class: 'badge info' }, el('span', { class: 'spin', style: 'width:10px;height:10px;border-width:2px' }), 'checking') :
+      b.checkError ? el('span', { class: 'badge danger', text: 'failed' }) :
+        c && isStale ? el('span', { class: 'badge warn', text: 'out of date' }) :
+          c && c.blocking ? el('span', { class: 'badge danger', text: `${c.problems.length} blocking` }) :
+            c ? el('span', { class: 'badge ok' }, icon('check'), 'ready') : null,
+    el('div', { class: 'grow' }),
+    el('button', { class: 'btn sm', type: 'button', disabled: b.checking, onclick: runCheck }, icon('refresh'), isStale && c ? 'Re-check' : 'Run again'));
+  const body = el('div', { class: 'card-b stack' });
+  if (b.checkError) body.appendChild(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'The check could not run' }), b.checkError)));
+  if (!c && !b.checkError) body.appendChild(el('div', null, el('div', { class: 'skel', style: 'width: 60%; margin-bottom: 10px' }), el('div', { class: 'skel', style: 'width: 40%' })));
+  if (c) {
+    if (isStale && !b.checking) body.appendChild(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: 'The options changed since the last check. It runs again automatically when you start, or click Re-check now.' })));
+    const sv = c.server || {};
+    body.appendChild(el('div', { class: 'row wrap', style: 'gap: 6px' },
+      el('span', { class: 'badge' }, 'as ', sv.user),
+      sv.is_superuser ? el('span', { class: 'badge accent', text: 'superuser' }) : null,
+      sv.read_all_data ? el('span', { class: 'badge accent', text: 'pg_read_all_data' }) : null,
+      sv.bypassrls ? el('span', { class: 'badge accent', text: 'BYPASSRLS' }) : null,
+      el('span', { class: 'badge', text: `large = over ${fmt.num(c.thresholds.large_mb)} MB or ${fmt.num(c.thresholds.large_rows)} rows` })));
+    if (c.problems.length) {
+      body.appendChild(el('div', { class: 'alert danger' }, icon('lock'), el('div', { class: 'body' }, el('b', { text: `${fmt.plural(c.problems.length, 'permission problem')} block the backup` }),
+        'Exclude what cannot be read, or ask for the missing privileges. Read-only logins need CONNECT, USAGE on schemas and SELECT on tables and sequences.')));
+      body.appendChild(el('div', { class: 'stack', style: 'gap: 6px' }, c.problems.map((p) => el('div', { class: 'problem' },
+        icon(p.kind === 'rls' ? 'shield' : 'lock'), el('div', { class: 'm', text: p.message }),
+        p.fixes.includes('schema_only') ? el('button', { class: 'btn sm', type: 'button', onclick: () => { setOpt(b, p.schema, p.name, { data: 'schema' }); refreshBackup(); } }, 'Schema only') : null,
+        p.fixes.includes('exclude_schema') ? el('button', { class: 'btn sm', type: 'button', onclick: () => { b.schemas.delete(p.schema); refreshBackup(); } }, 'Exclude schema') : null))));
+    } else {
+      body.appendChild(el('div', { class: 'alert ok' }, icon('check'), el('div', { class: 'body', text: 'Every selected table, sequence and schema can be read.' })));
+    }
+    if (c.locks && c.locks.length) {
+      body.appendChild(el('div', { class: 'alert warn' }, icon('clock'), el('div', { class: 'body' }, el('b', { text: 'Exclusive locks right now' }),
+        c.locks.map((l) => el('div', { class: 'mono', text: `${l.qname}: ${l.granted ? 'held' : 'waited for'} by PID ${l.pid}` })),
+        el('div', { class: 'subtle', text: `The backup waits up to the lock timeout (${b.lock_timeout_s} s) for these, then fails cleanly.` }))));
+    }
+    for (const n of c.notes || []) body.appendChild(el('div', { class: 'alert info' }, icon('info'), el('div', { class: 'body', text: n })));
+  }
+  return el('div', { class: 'card' }, head, body);
+}
+
+function setOpt(b, schema, table, patch) {
+  const k = tkey(schema, table);
+  b.opts.set(k, Object.assign({ data: 'full', order_by: null, limit: 1000 }, b.opts.get(k) || {}, patch));
+}
+
+function tablesCard(b) {
+  const c = b.check;
+  const card = el('div', { class: 'card' });
+  const head = el('div', { class: 'card-h' }, el('h2', { text: 'Tables and data options' }),
+    c ? el('span', { class: 'desc', text: `${fmt.plural(c.tables.length, 'table')} · ${c.tables.filter((t) => t.large).length} large` }) : null);
+  card.appendChild(head);
+  if (!c) { card.appendChild(el('div', { class: 'loading' }, el('span', { class: 'spin' }), 'Waiting for the check…')); return card; }
+  if (!c.tables.length) { card.appendChild(el('div', { class: 'empty' }, el('p', { text: 'No tables in the selected schemas.' }))); return card; }
+  const filter = el('input', { class: 'input sm', placeholder: 'Filter tables', value: b.filter, 'data-filter': '1', 'aria-label': 'Filter tables' });
+  const largeToggle = el('label', { class: 'check', style: 'align-items:center' }, el('input', { type: 'checkbox', checked: !!b.largeOnly }), el('span', { class: 't', text: 'Large tables only' }));
+  const tbody = el('tbody');
+  const info = el('div', { class: 'subtle', style: 'padding: 10px 18px' });
+  const schemaMode = b.mode === 'schema';
+  const draw = () => {
+    const q = b.filter.toLowerCase();
+    const all = c.tables.slice().sort((x, y) => (y.large - x.large) || (y.size - x.size) || x.qname.localeCompare(y.qname));
+    const matched = all.filter((t) => (!b.largeOnly || t.large || (b.opts.get(tkey(t.schema, t.name)) || {}).data !== 'full') && (!q || t.qname.toLowerCase().includes(q)));
+    const shown = matched.slice(0, 200);
+    clear(tbody, shown.map((t) => tableRow(b, t, schemaMode)));
+    if (!shown.length) tbody.appendChild(el('tr', null, el('td', { colspan: '4' }, el('div', { class: 'empty', style: 'padding: 20px' }, el('p', { text: b.largeOnly ? 'No large tables. Clear "Large tables only" to see every table.' : 'No table matches the filter.' })))));
+    info.textContent = matched.length > shown.length ? `Showing ${shown.length} of ${fmt.num(matched.length)} tables. Use the filter to find others.` :
+      `${fmt.num(matched.length)} of ${fmt.num(all.length)} tables shown.`;
+  };
+  filter.addEventListener('input', () => { b.filter = filter.value; draw(); });
+  largeToggle.querySelector('input').addEventListener('change', (e) => { b.largeOnly = e.target.checked; draw(); });
+  draw();
+  card.append(
+    el('div', { class: 'toolbar' }, el('div', { class: 'search' }, icon('search'), filter), largeToggle, el('div', { class: 'grow' }),
+      schemaMode ? el('span', { class: 'badge', text: 'Schema-only mode: no rows are copied' }) : null),
+    el('div', { class: 'table-wrap', style: 'max-height: 640px; overflow-y: auto' }, el('table', { class: 't' },
+      el('thead', null, el('tr', null, el('th', null, 'Table'), el('th', { class: 'num' }, 'Size'), el('th', { class: 'num' }, 'Est. rows'), el('th', null, 'Data to back up'))),
+      tbody)),
+    info);
+  return card;
+}
+
+function tableRow(b, t, schemaMode) {
+  const k = tkey(t.schema, t.name);
+  const o = b.opts.get(k) || { data: 'full', order_by: t.default_order_column, limit: 1000 };
+  const seg = el('div', { class: 'seg sm' }, [['full', 'Full'], ['latest', 'Latest N'], ['schema', 'Schema only']].map(([v, label]) =>
+    el('button', { type: 'button', class: o.data === v ? 'on' : '', disabled: schemaMode || (v === 'latest' && !t.order_columns.length && !o.order_by),
+      title: v === 'latest' && !t.order_columns.length ? 'No primary key or date/time column to order by' : null,
+      onclick: () => { setOpt(b, t.schema, t.name, { data: v, order_by: o.order_by || t.default_order_column }); refreshBackup(); } }, label)));
+  const cell = el('td', null, seg);
+  if (o.data === 'latest' && !schemaMode) {
+    const cols = t.order_columns.slice();
+    if (o.order_by && !cols.some((c) => c.name === o.order_by)) cols.push({ name: o.order_by, type: '?', pk: false, timestamp_like: false, index: null });
+    const sel = el('select', { class: 'input sm', 'aria-label': 'Ordering column', onchange: (e) => { setOpt(b, t.schema, t.name, { order_by: e.target.value }); refreshBackup(); } },
+      cols.map((c) => el('option', { value: c.name, selected: c.name === o.order_by },
+        `${c.name} (${c.type}${c.pk ? ', PK' : ''})${c.name === t.default_order_column ? ' · suggested' : ''}${c.index && c.index.usable ? ' · indexed' : ''}`)));
+    const n = el('input', { class: 'input sm n', value: String(o.limit), inputmode: 'numeric', 'aria-label': 'Number of newest rows',
+      onchange: (e) => { setOpt(b, t.schema, t.name, { limit: e.target.value }); refreshBackup(); } });
+    const chosen = cols.find((c) => c.name === o.order_by);
+    const idx = chosen && chosen.index;
+    cell.append(el('div', { class: 'order-cell' }, el('span', { class: 'subtle', text: 'newest' }), n, el('span', { class: 'subtle', text: 'rows by' }), sel));
+    if (idx && idx.message) cell.append(el('div', { class: 'advice ' + (idx.usable ? 'good' : 'bad') }, icon(idx.usable ? 'check' : 'alert'), el('span', { text: idx.message })));
+  }
+  if (t.option_error) cell.append(el('div', { class: 'advice bad', style: 'color: var(--danger)' }, icon('alert'), el('span', { text: t.option_error })));
+  return el('tr', { class: t.large ? 'large' : '' },
+    el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'n', text: t.qname, title: t.qname }),
+      t.large ? el('span', { class: 'badge warn', title: 'Over the large-table threshold (' + t.large_reason.join(' and ') + ')' }, 'large') : null,
+      t.kind === 'partitioned' ? el('span', { class: 'badge info', text: `${t.partitions} partitions` }) : null)),
+    el('td', { class: 'num', title: t.size_exact ? '' : 'Estimated (no permission for the exact size)' }, fmt.bytes(t.size), t.size_exact ? '' : ' ≈'),
+    el('td', { class: 'num' }, t.rows_unknown ? el('span', { class: 'subtle', text: 'not analyzed' }) : '≈ ' + fmt.num(t.est_rows)),
+    cell);
+}
+
+function summaryCard(b) {
+  const c = b.check;
+  const partial = [];
+  for (const [k, o] of b.opts) if (o.data !== 'full') partial.push([k.replace('\u0000', '.'), o]);
+  const isStale = checkIsStale(b);
+  const blockers = c ? c.problems.length + c.tables.filter((t) => t.option_error).length : 0;
+  const start = el('button', { class: 'btn primary lg', type: 'button', style: 'width: 100%', disabled: b.checking || b.starting || !b.schemas.size }, icon('play'), 'Start backup');
+  start.onclick = () => startBackup(start);
+  const imp = c && c.impact;
+  const name = b.filename || `${b.db}_YYYYMMDD_HHMMSS${partial.length && b.mode !== 'schema' ? '_partial' : ''}.sql${b.gzip ? '.gz' : ''}`;
+  return el('div', { class: 'card' },
+    el('div', { class: 'card-h' }, el('h2', { text: 'Summary' })),
+    el('div', { class: 'card-b stack' },
+      el('div', { class: 'summary-list' },
+        el('div', { class: 'r' }, el('span', { text: 'Mode' }), el('span', { text: { full: 'Full', schema: 'Schema only', data: 'Data only' }[b.mode] })),
+        el('div', { class: 'r' }, el('span', { text: 'Schemas' }), el('span', { text: b.schemas.size === b.schemasAll.length ? `All (${b.schemasAll.length})` : `${b.schemas.size} of ${b.schemasAll.length}` })),
+        el('div', { class: 'r' }, el('span', { text: 'Tables with data' }), el('span', { text: imp ? fmt.num(imp.tables) : '—' })),
+        el('div', { class: 'r' }, el('span', { text: 'Data to read' }), el('span', { text: imp ? fmt.bytes(imp.data_bytes) : '—', title: imp ? `of ${fmt.bytes(imp.full_data_bytes)} in total` : '' })),
+        el('div', { class: 'r' }, el('span', { text: 'Estimated rows' }), el('span', { text: imp ? fmt.num(imp.est_rows) : '—' })),
+        el('div', { class: 'r' }, el('span', { text: 'File' }), el('span', { class: 'mono', text: name, title: name }))),
+      partial.length && b.mode !== 'schema' ? el('div', { class: 'alert warn' }, icon('info'), el('div', { class: 'body' },
+        el('b', { text: `Partial backup: ${fmt.plural(partial.length, 'table')}` }),
+        'The file name gets _partial. Foreign keys pointing at these tables are restored as NOT VALID.',
+        el('div', { style: 'margin-top: 6px' }, partial.slice(0, 6).map(([n, o]) => el('div', { class: 'mono', text: `${n}: ${o.data === 'latest' ? 'latest ' + fmt.num(Number(o.limit)) : 'schema only'}` })),
+          partial.length > 6 ? el('div', { class: 'subtle', text: `and ${partial.length - 6} more` }) : null))) : null,
+      imp && imp.largest && imp.largest.length ? el('div', null, el('div', { class: 'section-title', text: 'Largest tables' }),
+        el('div', { class: 'summary-list' }, imp.largest.slice(0, 5).map((t) => el('div', { class: 'r' }, el('span', { class: 'mono', text: t.qname, title: t.qname, style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }), el('span', { text: fmt.bytes(t.size) }))))) : null),
+    el('div', { class: 'card-f', style: 'flex-direction: column; align-items: stretch' }, start,
+      el('div', { class: 'subtle', style: 'text-align:center' },
+        b.checking ? 'Checking…' : blockers && !isStale ? `${fmt.plural(blockers, 'problem')} must be fixed first` : isStale ? 'The check runs again before starting' : 'Read-only; runs in one snapshot')));
+}
+
+async function startBackup(btn) {
+  const b = state.backup;
+  if (b.starting) return;
+  b.starting = true;
+  busy(btn, true, 'Checking…');
+  try {
+    if (checkIsStale(b)) await runCheck();
+    const c = b.check;
+    if (!c) { toast(b.checkError || 'The pre-backup check failed.', 'err'); return; }
+    const bad = c.tables.filter((t) => t.option_error);
+    if (c.problems.length || bad.length) {
+      toast(`Fix ${fmt.plural(c.problems.length + bad.length, 'problem')} in the pre-backup check first.`, 'err', 'Backup not started');
+      return;
+    }
+    const req = backupRequestOptions(b);
+    const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+    const options = { mode: req.mode, schemas: req.schemas, tables: req.tables, privileges: b.privileges, gzip: b.gzip, out_dir: b.out_dir,
+      filename: b.filename || null, lock_timeout_s: num(b.lock_timeout_s), speed_limit_mb_s: num(b.speed_limit_mb_s) };
+    const res = await api('POST', '/api/backup', { server_id: b.sid, database: b.db, options });
+    toast(`Backup of ${b.db} started.`, 'ok');
+    state.openJob = res.job_id;
+    await pollJobs();
+    go(`#/activity/${enc(res.job_id)}`);
+  } catch (e) {
+    toastError(e, 'Backup not started');
+  } finally {
+    b.starting = false;
+    if (btn.isConnected) busy(btn, false);
+    refreshBackup();
+  }
+}
+
+/* ======================================================================== restore */
+
+async function viewRestore(view, token) {
+  const sid = state.route.sid;
+  loadingView(view);
+  let hist, dbs;
+  try {
+    [hist, dbs] = await Promise.all([api('GET', '/api/history'), state.dbs[sid] ? Promise.resolve(state.dbs[sid]) : loadDatabases(sid)]);
+  } catch (e) { if (!stale(token)) errorCard(view, e, () => route()); return; }
+  if (stale(token)) return;
+  renderHeader();
+  state.history = hist;
+  const pre = state.restorePrefill || {};
+  state.restorePrefill = null;
+  if (!state.restore || state.restore.sid !== sid || pre.history_id || pre.target) {
+    const r = { sid, source: 'history', history_id: null, file: '', mode: 'create', existing: '', newName: '', owner: '', confirm: '',
+      allow_non_empty: false, on_error: 'continue', single_transaction: false, contents: null };
+    const backups = hist.filter((h) => h.kind === 'backup' && h.status === 'success');
+    if (pre.history_id) {
+      const h = backups.find((x) => x.id === pre.history_id);
+      if (h) { r.history_id = h.id; r.newName = uniqueName(h.database + '_restored', dbs); }
+    }
+    if (pre.target) { r.mode = 'existing'; r.existing = pre.target; }
+    state.restore = r;
+    if (r.mode === 'existing' && r.existing) loadContents();
+  }
+  drawRestore(view);
+}
+function uniqueName(base, dbs) {
+  const names = new Set((dbs || []).map((d) => d.name));
+  let n = base, i = 2;
+  while (names.has(n)) n = `${base}_${i++}`;
+  return n;
+}
+
+let restoreView = null;
+function refreshRestore() { if (restoreView && restoreView.isConnected && state.route.view === 'restore') drawRestore(restoreView); }
+
+async function loadContents() {
+  const r = state.restore;
+  r.contents = null;
+  if (!r.existing || r.existing.includes('/')) return;
+  const name = r.existing;
+  try {
+    const c = await api('GET', `/api/servers/${enc(r.sid)}/databases/${enc(name)}/contents`);
+    if (state.restore === r && r.existing === name) { r.contents = c; refreshRestore(); }
+  } catch (e) { if (state.restore === r) { r.contents = { error: e.message }; refreshRestore(); } }
+}
+
+function drawRestore(view) {
+  restoreView = view;
+  const r = state.restore;
+  const s = server(r.sid);
+  const dbs = state.dbs[r.sid] || [];
+  const backups = (state.history || []).filter((h) => h.kind === 'backup' && h.status === 'success');
+  const chosen = backups.find((h) => h.id === r.history_id);
+  const scrollY = $('content').scrollTop;
+
+  // 1. source
+  const srcSeg = el('div', { class: 'seg' }, [['history', 'From history'], ['file', 'File on this PC']].map(([k, label]) =>
+    el('button', { type: 'button', class: r.source === k ? 'on' : '', onclick: () => { r.source = k; refreshRestore(); } }, label)));
+  let srcBody;
+  if (r.source === 'history') {
+    srcBody = backups.length ? el('div', { class: 'table-wrap', style: 'max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm)' },
+      el('table', { class: 't' }, el('thead', null, el('tr', null, el('th'), el('th', null, 'Database'), el('th', null, 'Server'), el('th', null, 'Taken'), el('th', { class: 'num' }, 'Size'), el('th', null, 'File'))),
+        el('tbody', null, backups.map((h) => el('tr', { style: 'cursor:pointer', onclick: () => { r.history_id = h.id; if (!r.newName) r.newName = uniqueName(h.database + '_restored', dbs); refreshRestore(); } },
+          el('td', null, el('input', { type: 'radio', name: 'hsrc', checked: h.id === r.history_id, 'aria-label': 'Select backup' })),
+          el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'n', text: h.database }), h.partial ? el('span', { class: 'badge warn', text: 'Partial' }) : null,
+            h.mode && h.mode !== 'full' ? el('span', { class: 'badge', text: h.mode === 'schema' ? 'schema only' : 'data only' }) : null)),
+          el('td', { class: 'subtle', text: (h.server && h.server.name) || '' }),
+          el('td', { class: 'nowrap', title: h.started }, fmt.date(h.started)),
+          el('td', { class: 'num' }, fmt.bytes(h.size)),
+          el('td', { class: 'mono subtle', text: fmt.basename(h.file), title: h.file })))))) :
+      el('div', { class: 'alert info' }, icon('info'), el('div', { class: 'body', text: 'No successful backups in the history yet. Choose "File on this PC" to restore a .sql or .sql.gz file.' }));
+  } else {
+    srcBody = el('div', { class: 'field' }, el('label', null, 'Full path of a .sql or .sql.gz file'),
+      el('input', { class: 'input mono', value: r.file, placeholder: 'C:\\Users\\you\\pg_backups\\shop_20261027_101500.sql.gz', oninput: (e) => { r.file = e.target.value; startBtnState(); }, onchange: () => refreshRestore() }),
+      el('div', { class: 'hint', text: 'Gzip is detected from the file content, not the extension.' }));
+  }
+
+  // 2. target
+  const modeCards = el('div', { class: 'radio-cards' }, [
+    ['create', 'New database', 'Created from template0, UTF8'],
+    ['existing', 'Existing database', 'Restore into a database that exists'],
+    ['recreate', 'Drop and recreate', 'Replace an existing database'],
+  ].map(([k, t, d]) => el('button', { type: 'button', class: 'radio-card' + (r.mode === k ? ' on' : ''), onclick: () => { r.mode = k; r.confirm = ''; refreshRestore(); if (k !== 'create' && r.existing) loadContents(); } },
+    el('span', { class: 't' }, k === 'recreate' ? icon('alert') : null, t), el('span', { class: 'd', text: d }))));
+  const dbSelect = el('select', { class: 'input', onchange: (e) => { r.existing = e.target.value; r.confirm = ''; r.allow_non_empty = false; refreshRestore(); loadContents(); } },
+    el('option', { value: '' }, 'Choose a database…'), dbs.map((d) => el('option', { value: d.name, selected: d.name === r.existing, disabled: r.mode === 'recreate' && d.protected },
+      d.name + (d.protected && r.mode === 'recreate' ? ' (protected)' : '') + (d.size !== null ? ` · ${fmt.bytes(d.size)}` : ''))));
+  const targetFields = el('div', { class: 'stack' });
+  if (r.mode === 'create') {
+    const owner = el('select', { class: 'input', onchange: (e) => { r.owner = e.target.value; } }, el('option', { value: '' }, 'Default (current user)'));
+    rolesOf(r.sid).then((roles) => { for (const x of roles) owner.appendChild(el('option', { value: x.name, selected: x.name === r.owner }, x.name)); }).catch(() => {});
+    const exists = dbs.some((d) => d.name === r.newName);
+    targetFields.append(el('div', { class: 'form-grid' },
+      el('div', { class: 'field' }, el('label', null, 'New database name'),
+        el('input', { class: 'input mono' + (exists ? ' invalid' : ''), value: r.newName, oninput: (e) => { r.newName = e.target.value; startBtnState(); }, onchange: () => refreshRestore() }),
+        exists ? el('div', { class: 'hint', style: 'color: var(--danger)', text: 'A database with this name exists. Choose another name or "Drop and recreate".' }) : null),
+      el('div', { class: 'field' }, el('label', null, 'Owner'), owner)));
+  } else {
+    targetFields.append(el('div', { class: 'field' }, el('label', null, r.mode === 'recreate' ? 'Database to drop and recreate' : 'Target database'), dbSelect));
+    if (r.existing) {
+      const busyDb = (dbs.find((d) => d.name === r.existing) || {}).busy || [];
+      if (busyDb.length) targetFields.append(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: `A job is using ${r.existing} right now.` })));
+      if (r.mode === 'existing') {
+        const c = r.contents;
+        if (!c) targetFields.append(el('div', { class: 'subtle', text: r.existing.includes('/') ? 'The contents check is not available for names containing "/".' : 'Checking whether the database is empty…' }));
+        else if (c.error) targetFields.append(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body', text: c.error })));
+        else if (c.empty) targetFields.append(el('div', { class: 'alert ok' }, icon('check'), el('div', { class: 'body', text: `${r.existing} is empty. Ready to restore.` })));
+        else targetFields.append(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body' },
+          el('b', { text: `${r.existing} is not empty` }),
+          `It has ${fmt.plural(c.tables, 'table')}, ${fmt.plural(c.functions, 'function')} and ${fmt.plural(c.types, 'type')}. Objects that already exist produce "already exists" errors.`,
+          el('label', { class: 'check', style: 'margin-top: 8px' }, el('input', { type: 'checkbox', checked: r.allow_non_empty, onchange: (e) => { r.allow_non_empty = e.target.checked; refreshRestore(); } }),
+            el('span', { class: 't', text: 'Restore into it anyway' })))));
+      } else {
+        targetFields.append(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' },
+          el('b', { text: `${r.existing} will be dropped` }), 'All its data is deleted and its sessions are ended. The database is then created again from template0 (UTF8) and the backup is restored into it.',
+          el('div', { class: 'field', style: 'margin-top: 10px' }, el('label', null, 'Type ', el('span', { class: 'mono', text: r.existing }), ' to confirm'),
+            el('input', { class: 'input mono', value: r.confirm, autocomplete: 'off', spellcheck: 'false', oninput: (e) => { r.confirm = e.target.value; startBtnState(); } })))));
+      }
+    }
+  }
+
+  // 3. options
+  const errSeg = el('div', { class: 'radio-cards', style: 'grid-template-columns: repeat(2, minmax(0,1fr))' }, [
+    ['continue', 'Continue on errors', 'Log each failed statement and keep going (recommended)'],
+    ['stop', 'Stop at the first error', 'Objects created before the error stay'],
+  ].map(([k, t, d]) => el('button', { type: 'button', disabled: r.single_transaction, class: 'radio-card' + ((r.single_transaction ? 'stop' : r.on_error) === k ? ' on' : ''), onclick: () => { r.on_error = k; refreshRestore(); } },
+    el('span', { class: 't', text: t }), el('span', { class: 'd', text: d }))));
+
+  const target = r.mode === 'create' ? r.newName : r.existing;
+  const sourceLabel = r.source === 'history' ? (chosen ? `${chosen.database} · ${fmt.date(chosen.started)}` : 'Not chosen') : (r.file ? fmt.basename(r.file) : 'Not chosen');
+  const start = el('button', { class: 'btn primary lg', type: 'button', style: 'width: 100%' }, icon('restore'), 'Start restore');
+  const hint = el('div', { class: 'subtle', style: 'text-align: center' });
+  function startBtnState() {
+    let why = '';
+    if (r.source === 'history' && !chosen) why = 'Choose a backup';
+    else if (r.source === 'file' && !r.file.trim()) why = 'Enter a file path';
+    else if (!target) why = 'Choose the target database';
+    else if (r.mode === 'create' && dbs.some((d) => d.name === r.newName)) why = 'That database already exists';
+    else if (r.mode === 'existing' && r.contents && !r.contents.empty && !r.contents.error && !r.allow_non_empty) why = 'Confirm restoring into a non-empty database';
+    else if (r.mode === 'recreate' && r.confirm !== r.existing) why = 'Type the database name to confirm';
+    start.disabled = !!why;
+    start.className = 'btn lg ' + (r.mode === 'recreate' ? 'danger' : 'primary');
+    hint.textContent = why || (r.mode === 'recreate' ? `${r.existing} is dropped when the job starts` : 'You can follow the progress in Activity');
+  }
+  startBtnState();
+  start.onclick = () => startRestore(start);
+
+  clear(view, el('div', { class: 'grid-main' },
+    el('div', { class: 'stack', style: 'gap: 20px; min-width: 0' },
+      el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(1), el('h2', { text: 'Backup to restore' }), el('div', { class: 'grow' }), srcSeg), el('div', { class: 'card-b' }, srcBody)),
+      el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(2), el('h2', { text: 'Target' }), el('span', { class: 'desc', text: `on ${s.name}` })),
+        el('div', { class: 'card-b stack', style: 'gap: 16px' }, modeCards, targetFields)),
+      el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(3), el('h2', { text: 'Options' })),
+        el('div', { class: 'card-b stack', style: 'gap: 16px' }, errSeg,
+          el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: r.single_transaction, onchange: (e) => { r.single_transaction = e.target.checked; refreshRestore(); } }),
+            el('span', null, el('span', { class: 't', text: 'Single transaction (all or nothing)' }), el('span', { class: 'd', text: 'Any error rolls back everything. This implies "stop at the first error".' })))))),
+    el('div', { class: 'sticky-side' }, el('div', { class: 'card' },
+      el('div', { class: 'card-h' }, el('h2', { text: 'Summary' })),
+      el('div', { class: 'card-b' }, el('div', { class: 'summary-list' },
+        el('div', { class: 'r' }, el('span', { text: 'Backup' }), el('span', { text: sourceLabel, title: sourceLabel })),
+        chosen ? el('div', { class: 'r' }, el('span', { text: 'Size' }), el('span', { text: fmt.bytes(chosen.size) })) : null,
+        el('div', { class: 'r' }, el('span', { text: 'Server' }), el('span', { text: s.name })),
+        el('div', { class: 'r' }, el('span', { text: 'Target' }), el('span', { class: 'mono', text: target || '—', title: target || '' })),
+        el('div', { class: 'r' }, el('span', { text: 'Action' }), el('span', { text: { create: 'Create new', existing: 'Into existing', recreate: 'Drop + recreate' }[r.mode] })),
+        el('div', { class: 'r' }, el('span', { text: 'On error' }), el('span', { text: r.single_transaction ? 'Roll back all' : r.on_error === 'stop' ? 'Stop' : 'Continue' }))),
+      chosen && chosen.partial ? el('div', { class: 'alert warn', style: 'margin-top: 14px' }, icon('info'), el('div', { class: 'body', text: 'This is a partial backup: some tables have only their newest rows or no rows.' })) : null),
+      el('div', { class: 'card-f', style: 'flex-direction: column; align-items: stretch' }, start, hint)))));
+  $('content').scrollTop = scrollY;
+}
+function stepNum(n) { return el('span', { class: 'badge accent', style: 'width: 22px; height: 22px; padding: 0; justify-content: center', text: String(n) }); }
+
+async function startRestore(btn) {
+  const r = state.restore;
+  const database = r.mode === 'create' ? r.newName.trim() : r.existing;
+  const body = { server_id: r.sid, database, options: { on_error: r.single_transaction ? 'stop' : r.on_error, single_transaction: r.single_transaction },
+    target: { mode: r.mode, owner: r.mode === 'create' ? (r.owner || null) : null, allow_non_empty: r.mode === 'existing' && r.allow_non_empty, confirm: r.mode === 'recreate' ? r.confirm : null } };
+  if (r.source === 'history') body.history_id = r.history_id; else body.file = r.file.trim();
+  busy(btn, true, 'Starting…');
+  try {
+    const res = await api('POST', '/api/restore', body);
+    toast(`Restore into ${database} started.`, 'ok');
+    state.openJob = res.job_id;
+    delete state.dbs[r.sid];
+    state.restore = null;
+    await pollJobs();
+    go(`#/activity/${enc(res.job_id)}`);
+  } catch (e) {
+    busy(btn, false);
+    toastError(e, 'Restore not started');
+  }
+}
+
+/* ======================================================================== jobs: polling */
+
+let jobsTimer = null, detailTimer = null, jobsInFlight = false;
+async function pollJobs() {
+  clearTimeout(jobsTimer);
+  if (jobsInFlight) return;
+  jobsInFlight = true;
+  const before = new Map(state.jobs.map((j) => [j.id, j.status]));
+  try {
+    state.jobs = await api('GET', '/api/jobs');
+  } catch (e) { /* offline banner handles it */ }
+  jobsInFlight = false;
+  for (const j of state.jobs) {
+    if (before.get(j.id) === 'running' && j.status !== 'running') announce(j);
+  }
+  renderSideLinks();
+  if (['activity', 'databases', 'backup', 'restore', 'history'].includes(state.route.view)) renderHeader();
+  if (state.route.view === 'activity') drawActivity();
+  if (runningJobs().length) jobsTimer = setTimeout(pollJobs, document.hidden ? 5000 : 2000);
+  scheduleDetail(0);
+}
+function announce(j) {
+  const what = j.kind === 'backup' ? 'Backup' : 'Restore';
+  const res = j.result || {};
+  if (j.status === 'success') {
+    const msg = j.kind === 'backup' ? `${fmt.basename(res.file)} · ${fmt.bytes(res.size)}${res.partial ? ' · partial' : ''}`
+      : `${fmt.num(res.objects)} objects, ${fmt.num(res.rows)} rows${j.error_count ? `, ${fmt.plural(j.error_count, 'error')}` : ''}`;
+    toast(msg, j.error_count ? 'warn' : 'ok', `${what} of ${j.database} finished`);
+  } else if (j.status === 'cancelled') toast(`${what} of ${j.database} was cancelled.`, 'warn');
+  else toast(j.error || 'See Activity for details.', 'err', `${what} of ${j.database} failed`);
+  state.history = null;
+  const sid = j.server && j.server.id;
+  if (sid) delete state.dbs[sid];
+  if (state.route.view === 'history') route();
+  else if (state.route.view === 'databases' && state.route.sid === sid) route();
+}
+
+function scheduleDetail(delay) {
+  clearTimeout(detailTimer);
+  const id = state.openJob;
+  if (!id || state.route.view !== 'activity') return;
+  detailTimer = setTimeout(() => pollDetail(id), delay);
+}
+async function pollDetail(id) {
+  const d = state.jobDetail[id] || (state.jobDetail[id] = { snap: null, log: [], seq: 0 });
+  try {
+    const snap = await api('GET', `/api/jobs/${enc(id)}?log_after=${d.seq}`);
+    d.snap = snap;
+    for (const line of snap.log || []) if (line.seq > d.seq) { d.log.push(line); d.seq = line.seq; }
+    if (d.log.length > 200) d.log.splice(0, d.log.length - 200);
+    const idx = state.jobs.findIndex((j) => j.id === id);
+    const wasRunning = idx >= 0 && state.jobs[idx].status === 'running';
+    if (idx >= 0) state.jobs[idx] = Object.assign({}, snap, { log: undefined });
+    if (wasRunning && snap.status !== 'running') { announce(snap); renderSideLinks(); }
+  } catch (e) {
+    if (e.code === 'not_found') { state.openJob = null; }
+  }
+  if (state.route.view === 'activity') drawActivity();
+  if (state.openJob === id && d.snap && d.snap.status === 'running') scheduleDetail(document.hidden ? 5000 : 700);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && runningJobs().length) pollJobs(); });
+
+/* ======================================================================== activity */
+
+let activityView = null;
+function viewActivity(view) {
+  activityView = view;
+  if (state.route.job) state.openJob = state.route.job;
+  drawActivity();
+  pollJobs();
+}
+
+function drawActivity() {
+  const view = activityView;
+  if (!view || !view.isConnected) return;
+  const jobs = state.jobs.slice().sort((a, b) => ((b.status === 'running') - (a.status === 'running')) || String(b.started).localeCompare(String(a.started)));
+  if (!jobs.length) {
+    clear(view, el('div', { class: 'card' }, el('div', { class: 'empty', style: 'padding: 64px 24px' },
+      el('div', { class: 'ic' }, icon('activity')), el('h3', { text: 'No jobs in this session' }),
+      el('p', { text: 'Backups and restores you start appear here with live progress. Finished jobs from earlier sessions are in History.' }),
+      state.route.sid ? el('a', { class: 'btn primary', href: `#/s/${enc(state.route.sid)}/backup` }, icon('backup'), 'Start a backup') : null)));
+    return;
+  }
+  const running = jobs.filter((j) => j.status === 'running');
+  const done = jobs.filter((j) => j.status !== 'running');
+  const openEl = document.activeElement;
+  const keepFocus = openEl && openEl.dataset && openEl.dataset.focus;
+  const logBox = view.querySelector('.log');
+  const logAtBottom = !logBox || logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 20;
+  const logScroll = logBox ? logBox.scrollTop : 0;
+  clear(view,
+    el('div', { class: 'stats' },
+      statBox('Running', fmt.num(running.length), 'up to 4 at once'),
+      statBox('Finished', fmt.num(done.filter((j) => j.status === 'success').length), 'this session'),
+      statBox('Failed or cancelled', fmt.num(done.filter((j) => j.status !== 'success').length), 'this session')),
+    running.length ? el('div', { class: 'section-title', style: 'margin: 4px 0 -8px', text: 'Running' }) : null,
+    running.map(jobCard),
+    done.length ? el('div', { class: 'section-title', style: 'margin: 8px 0 -8px', text: 'Finished in this session' }) : null,
+    done.map(jobCard));
+  const newLog = view.querySelector('.log');
+  if (newLog) newLog.scrollTop = logAtBottom ? newLog.scrollHeight : logScroll;
+  if (keepFocus) { const f = view.querySelector(`[data-focus="${keepFocus}"]`); if (f) f.focus(); }
+}
+
+const STATUS_BADGE = { running: ['info', 'Running'], success: ['ok', 'Succeeded'], failed: ['danger', 'Failed'], cancelled: ['warn', 'Cancelled'], interrupted: ['warn', 'Interrupted'] };
+function statusBadge(st, j) {
+  if (st === 'running' && j && j.cancel_requested) return el('span', { class: 'badge warn', text: 'Cancelling…' });
+  if (st === 'success' && j && j.error_count) return el('span', { class: 'badge warn', text: `Done, ${fmt.plural(j.error_count, 'error')}` });
+  const [cls, label] = STATUS_BADGE[st] || ['', st];
+  return el('span', { class: 'badge ' + cls, text: label });
+}
+
+function jobCard(j) {
+  const open = state.openJob === j.id;
+  const d = state.jobDetail[j.id];
+  const snap = (open && d && d.snap) || j;
+  const p = snap.progress || {};
+  const running = snap.status === 'running';
+  const pct = snap.status === 'success' ? 100 : snap.percent;
+  const barCls = snap.status === 'success' ? 'ok' : snap.status === 'failed' ? 'danger' : snap.status === 'running' ? '' : 'warn';
+  const cancel = running && !snap.cancel_requested ? el('button', { class: 'btn sm', type: 'button', 'data-focus': 'cancel-' + j.id,
+    onclick: (e) => { e.stopPropagation(); cancelJob(snap); } }, icon('stop'), 'Cancel') : null;
+  const toggle = () => {
+    state.openJob = open ? null : j.id;
+    history.replaceState(null, '', open ? '#/activity' : `#/activity/${enc(j.id)}`);
+    drawActivity();
+    if (!open) pollDetail(j.id);
+  };
+  const sub = [
+    el('span', null, icon('server'), ' ', (snap.server && snap.server.name) || ''),
+    el('span', null, icon('clock'), ' ', fmt.date(snap.started)),
+    el('span', null, 'Phase: ', el('b', { text: snap.phase || '—' })),
+  ];
+  const head = el('div', { class: 'job-h', onclick: toggle, role: 'button', tabindex: '0', 'aria-expanded': open ? 'true' : 'false',
+    onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } },
+    el('div', { class: 'job-ic ' + snap.kind }, icon(snap.kind === 'backup' ? 'backup' : 'restore')),
+    el('div', { style: 'min-width: 0' }, el('div', { class: 'job-title' }, el('span', { class: 'n', text: `${snap.kind === 'backup' ? 'Backup' : 'Restore'} · ${snap.database}` }), statusBadge(snap.status, snap)),
+      el('div', { class: 'job-sub' }, sub)),
+    el('div', { class: 'row' }, cancel, el('span', { class: 'btn sm ghost icon-only', style: open ? 'transform: rotate(90deg)' : '' }, icon('chevron'))));
+  const line2 = running ? `${fmt.dur(snap.elapsed_s)} elapsed${snap.eta_s !== null && snap.eta_s !== undefined ? ` · about ${fmt.dur(snap.eta_s)} left` : ''}` : `took ${fmt.dur(snap.elapsed_s)}`;
+  const curText = p.current ? (snap.kind === 'backup' ? `${p.current.name}${p.current.est_rows ? ` · ${fmt.num(p.current.rows)} / ≈${fmt.num(p.current.est_rows)} rows` : p.current.rows ? ` · ${fmt.num(p.current.rows)} rows` : ''}` : `${p.current.kind || ''} ${p.current.name || ''}`.trim()) : '';
+  const prog = el('div', { class: 'job-prog' },
+    el('div', { class: 'bar ' + barCls + (running && (pct === null || pct === undefined) ? ' indet' : '') }, el('i', { style: `width: ${pct === null || pct === undefined ? 0 : Math.min(100, pct)}%` })),
+    el('div', { class: 'line' }, el('span', { text: running && curText ? curText : snap.status === 'failed' && snap.error ? snap.error : (snap.file ? fmt.basename(snap.file) : '') , style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;' + (snap.status === 'failed' ? 'color: var(--danger)' : '') }),
+      el('span', { class: 'nowrap', text: `${fmt.pct(pct)} · ${line2}` })));
+  const card = el('div', { class: 'job' + (open ? ' open' : '') }, head, prog);
+  if (open) card.appendChild(jobBody(snap, d));
+  return card;
+}
+
+function jobBody(j, d) {
+  const p = j.progress || {};
+  const items = j.kind === 'backup' ? [
+    ['Objects', `${fmt.num(p.objects_done)} / ${fmt.num(p.objects_total)}`],
+    ['Tables', `${fmt.num(p.tables_done)} / ${fmt.num(p.tables_total)}`],
+    ['Rows copied', `${fmt.num(p.rows)} / ≈${fmt.num(p.est_rows)}`],
+    ['Data read', `${fmt.bytes(p.data_bytes_done)} / ${fmt.bytes(p.data_bytes_total)}`],
+    ['Written to file', fmt.bytes(p.bytes_written)],
+    ['Elapsed', fmt.dur(j.elapsed_s)],
+  ] : [
+    ['File position', `${fmt.bytes(p.position)} / ${fmt.bytes(p.file_size)}`],
+    ['Objects', fmt.num(p.objects_done)],
+    ['Rows loaded', fmt.num(p.rows)],
+    ['Errors', fmt.num(j.error_count)],
+    ['Warnings', fmt.num(j.warning_count)],
+    ['Elapsed', fmt.dur(j.elapsed_s)],
+  ];
+  const body = el('div', { class: 'job-body' },
+    el('div', { class: 'kv' }, items.map(([k, v]) => el('div', null, el('div', { class: 'k', text: k }), el('div', { class: 'v', text: v, title: v })))));
+  if (j.file) body.appendChild(el('div', { class: 'row', style: 'gap: 8px' }, icon('file'), el('span', { class: 'mono', text: j.file, style: 'word-break: break-all' })));
+  if (j.history_error) body.appendChild(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: j.history_error })));
+  const res = j.result;
+  if (res && j.status !== 'running') body.appendChild(resultBlock(j, res));
+  else if (j.status === 'failed' && j.error) body.appendChild(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'The job failed' }), j.error)));
+  const lines = d ? d.log : [];
+  body.appendChild(el('div', null, el('div', { class: 'section-title', text: `Log${lines.length ? ` (last ${lines.length} lines)` : ''}` }),
+    el('div', { class: 'log', role: 'log', 'aria-live': 'off' }, lines.length ? lines.map((l) => el('div', { class: l.error || l.level === 'error' ? 'error' : l.level === 'warning' ? 'warning' : '' },
+      el('span', { class: 't', text: fmt.dur(l.t) }), l.msg)) : el('div', { text: 'Loading…' }))));
+  return body;
+}
+
+function resultBlock(j, res) {
+  const wrap = el('div', { class: 'stack' });
+  if (j.status === 'failed' && j.error) wrap.appendChild(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'The job failed' }), j.error)));
+  if (j.kind === 'backup') {
+    if (res.partial && res.partial_tables && res.partial_tables.length) {
+      wrap.appendChild(el('div', { class: 'alert warn' }, icon('info'), el('div', { class: 'body' }, el('b', { text: 'Partial backup' }),
+        res.partial_tables.map((t) => el('div', { class: 'mono', text: `${t.table}: ${t.data === 'latest' ? `latest ${fmt.num(t.limit)} by ${t.order_by}` : 'schema only'}` })))));
+    }
+    if (res.skipped_fks && res.skipped_fks.length) wrap.appendChild(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body',
+      text: `${fmt.plural(res.skipped_fks.length, 'foreign key')} could not be written as NOT VALID and were left out; the statements are in the file header.` })));
+    const warns = res.warnings || [];
+    if (warns.length) wrap.appendChild(el('div', null, el('div', { class: 'section-title', text: `Warnings (${warns.length})` }),
+      el('div', { class: 'errlist' }, warns.map((w) => el('div', { class: 'erritem warning' }, el('div', { text: typeof w === 'string' ? w : w.message || JSON.stringify(w) }))))));
+  } else {
+    const errs = res.errors || [];
+    if (res.missing_roles && res.missing_roles.length) wrap.appendChild(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body' },
+      el('b', { text: 'Roles missing on this server' }), res.missing_roles.join(', '), el('div', { class: 'subtle', text: 'Grants and owners for these roles were skipped.' }))));
+    if (errs.length) wrap.appendChild(el('div', null, el('div', { class: 'section-title', text: `Errors (${fmt.num(res.error_count || errs.length)}${errs.length < (res.error_count || 0) ? `, first ${errs.length} shown` : ''})` }),
+      el('div', { class: 'errlist' }, errs.map((e) => el('div', { class: 'erritem' },
+        el('div', { class: 'o', text: `${e.object || 'Statement'}${e.line ? ` · line ${e.line}` : ''}${e.sqlstate ? ` · ${e.sqlstate}` : ''}` }),
+        el('div', { text: e.message }), e.sql ? el('pre', { text: e.sql }) : null)))));
+    else if (j.status === 'success') wrap.appendChild(el('div', { class: 'alert ok' }, icon('check'), el('div', { class: 'body', text: `Restored ${fmt.num(res.objects)} objects and ${fmt.num(res.rows)} rows with no errors.` })));
+    const warns = res.warnings || [];
+    if (warns.length) wrap.appendChild(el('div', null, el('div', { class: 'section-title', text: `Warnings (${fmt.num(res.warning_count || warns.length)})` }),
+      el('div', { class: 'errlist' }, warns.map((w) => el('div', { class: 'erritem warning' },
+        el('div', { class: 'o', text: w.object || '' }), el('div', { text: typeof w === 'string' ? w : w.message }))))));
+  }
+  return wrap;
+}
+
+async function cancelJob(j) {
+  const yes = await confirmBox({ title: `Cancel this ${j.kind}?`, confirmLabel: `Cancel ${j.kind}`, danger: true,
+    message: j.kind === 'backup' ? 'The job stops at the next object or COPY chunk. The unfinished .part file is deleted.'
+      : 'The job stops at the next statement or COPY chunk. Objects restored so far stay in the target database (unless single transaction was chosen).' });
+  if (!yes) return;
+  try {
+    await api('POST', `/api/jobs/${enc(j.id)}/cancel`);
+    toast('Cancel requested.', 'info');
+    pollJobs();
+  } catch (e) { toastError(e); }
+}
+
+/* ======================================================================== history */
+
+async function viewHistory(view, token) {
+  if (!state.history) loadingView(view);
+  else drawHistory(view);
+  try { state.history = await api('GET', '/api/history'); } catch (e) { if (!stale(token)) errorCard(view, e, () => route()); return; }
+  if (stale(token)) return;
+  drawHistory(view);
+}
+
+function drawHistory(view) {
+  const all = state.history || [];
+  const f = state.histFilter;
+  const q = el('input', { class: 'input', placeholder: 'Search database, server or file', value: f.q, 'data-filter': '1', 'aria-label': 'Search history' });
+  const kindSeg = el('div', { class: 'seg' }, [['all', 'All'], ['backup', 'Backups'], ['restore', 'Restores']].map(([k, label]) =>
+    el('button', { type: 'button', class: f.kind === k ? 'on' : '', onclick: () => { f.kind = k; drawHistory(view); } }, label)));
+  const statusSel = el('select', { class: 'input', style: 'width: 160px', 'aria-label': 'Status', onchange: (e) => { f.status = e.target.value; drawHistory(view); } },
+    [['all', 'Any status'], ['success', 'Succeeded'], ['failed', 'Failed'], ['cancelled', 'Cancelled'], ['interrupted', 'Interrupted'], ['running', 'Running']].map(([k, l]) => el('option', { value: k, selected: f.status === k }, l)));
+  const tbody = el('tbody');
+  const drawRows = () => {
+    const needle = f.q.toLowerCase();
+    const rows = all.filter((h) => (f.kind === 'all' || h.kind === f.kind) && (f.status === 'all' || h.status === f.status) &&
+      (!needle || [h.database, h.server && h.server.name, h.file].some((x) => x && String(x).toLowerCase().includes(needle))));
+    if (!rows.length) {
+      clear(tbody, el('tr', null, el('td', { colspan: '8' }, el('div', { class: 'empty' },
+        el('div', { class: 'ic' }, icon('history')), el('h3', { text: all.length ? 'Nothing matches' : 'No history yet' }),
+        el('p', { text: all.length ? 'Change the filters to see more entries.' : 'Every backup and restore is recorded here, with its file, size and outcome.' })))));
+      return;
+    }
+    clear(tbody, rows.map(historyRow));
+  };
+  q.addEventListener('input', () => { f.q = q.value; drawRows(); });
+  drawRows();
+  const backups = all.filter((h) => h.kind === 'backup' && h.status === 'success');
+  clear(view,
+    el('div', { class: 'stats' },
+      statBox('Entries', fmt.num(all.length), 'newest first'),
+      statBox('Successful backups', fmt.num(backups.length), fmt.bytes(backups.reduce((a, h) => a + (h.size || 0), 0)) + ' in files'),
+      statBox('Last backup', backups[0] ? fmt.ago(backups[0].started) : '—', backups[0] ? backups[0].database : ''),
+      statBox('Failed', fmt.num(all.filter((h) => h.status === 'failed').length), 'backups and restores')),
+    el('div', { class: 'card' },
+      el('div', { class: 'toolbar' }, el('div', { class: 'search' }, icon('search'), q), kindSeg, statusSel, el('div', { class: 'grow' }),
+        el('button', { class: 'btn', type: 'button', onclick: () => { state.history = null; route(); } }, icon('refresh'), 'Refresh')),
+      el('div', { class: 'table-wrap' }, el('table', { class: 't' },
+        el('thead', null, el('tr', null, el('th', null, 'Job'), el('th', null, 'When'), el('th', null, 'Server'), el('th', null, 'File'), el('th', { class: 'num' }, 'Size'),
+          el('th', { class: 'num' }, 'Duration'), el('th', null, 'Result'), el('th', { class: 'num' }, 'Actions'))),
+        tbody))));
+}
+
+function historyRow(h) {
+  const isBackup = h.kind === 'backup';
+  const canRestore = isBackup && h.status === 'success';
+  const more = el('button', { class: 'btn sm icon-only ghost', type: 'button', 'aria-label': 'More actions', title: 'More actions' }, icon('more'));
+  more.onclick = () => menu(more, [
+    { icon: 'folder', label: 'Open folder', disabled: !h.file, action: () => openFolder(h) },
+    { icon: 'activity', label: 'Show in Activity', disabled: !state.jobs.some((j) => j.id === h.id), action: () => go(`#/activity/${enc(h.id)}`) },
+    '-',
+    { icon: 'trash', label: 'Delete entry…', danger: true, disabled: h.status === 'running', action: () => deleteHistory(h) },
+  ]);
+  const counts = [];
+  if (h.objects !== null && h.objects !== undefined) counts.push(`${fmt.num(h.objects)} objects`);
+  if (isBackup && h.tables !== null && h.tables !== undefined) counts.push(`${fmt.num(h.tables)} tables`);
+  if (h.rows !== null && h.rows !== undefined) counts.push(`${fmt.num(h.rows)} rows`);
+  return el('tr', null,
+    el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'job-ic ' + h.kind, style: 'width: 28px; height: 28px; border-radius: 7px' }, icon(isBackup ? 'backup' : 'restore')),
+      el('div', { style: 'min-width: 0' }, el('div', { class: 'row', style: 'gap: 6px' }, el('span', { class: 'n', text: h.database }),
+        h.partial ? el('span', { class: 'badge warn', title: (h.partial_tables || []).map((t) => t.table).join(', '), text: 'Partial' }) : null,
+        h.gzip ? el('span', { class: 'badge', text: 'gzip' }) : null),
+        el('div', { class: 'subtle', style: 'font-weight: 400', text: isBackup ? `Backup${h.mode && h.mode !== 'full' ? ` · ${h.mode === 'schema' ? 'schema only' : 'data only'}` : ''}` : `Restore${h.target_mode ? ` · ${{ create: 'new database', existing: 'existing database', recreate: 'recreated' }[h.target_mode] || h.target_mode}` : ''}` })))),
+    el('td', { class: 'nowrap', title: h.started }, el('div', { text: fmt.date(h.started) }), el('div', { class: 'subtle', text: fmt.ago(h.started) })),
+    el('td', { text: (h.server && h.server.name) || '' }),
+    el('td', { class: 'mono', style: 'max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap', title: h.file || '', text: fmt.basename(h.file) || '—' }),
+    el('td', { class: 'num' }, fmt.bytes(h.size)),
+    el('td', { class: 'num' }, fmt.dur(h.duration_s)),
+    el('td', null, el('div', { class: 'row wrap', style: 'gap: 4px' }, statusBadge(h.status, h), h.warning_count ? el('span', { class: 'badge warn', text: fmt.plural(h.warning_count, 'warning') }) : null),
+      counts.length ? el('div', { class: 'subtle', text: counts.join(' · ') }) : null,
+      h.error && h.status !== 'success' ? el('div', { class: 'subtle', style: 'color: var(--danger); max-width: 280px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap', title: h.error, text: h.error }) : null),
+    el('td', null, el('div', { class: 'actions' },
+      canRestore ? el('button', { class: 'btn sm', type: 'button', onclick: () => restoreFromHistory(h) }, icon('restore'), 'Restore') : null,
+      more)));
+}
+
+function restoreFromHistory(h) {
+  const sid = (h.server && server(h.server.id)) ? h.server.id : state.route.sid || (state.servers[0] && state.servers[0].id);
+  if (!sid) { toast('Add a server to restore into first.', 'warn'); return; }
+  state.restorePrefill = { history_id: h.id };
+  go(`#/s/${enc(sid)}/restore`);
+}
+
+async function openFolder(h) {
+  try {
+    const r = await api('POST', `/api/history/${enc(h.id)}/open-folder`);
+    toast(`Opened ${r.opened}`, 'ok');
+  } catch (e) { toastError(e); }
+}
+
+async function deleteHistory(h) {
+  const cb = el('input', { type: 'checkbox' });
+  const yes = await confirmBox({ title: 'Delete this history entry?', confirmLabel: 'Delete', danger: true,
+    message: `${h.kind === 'backup' ? 'Backup' : 'Restore'} of ${h.database} from ${fmt.date(h.started)}.`,
+    extra: h.kind === 'backup' && h.file ? el('label', { class: 'check' }, cb, el('span', null, el('span', { class: 't', text: 'Also delete the backup file' }),
+      el('span', { class: 'd mono', text: h.file }))) : null });
+  if (!yes) return;
+  try {
+    const res = await api('DELETE', `/api/history/${enc(h.id)}${cb.checked ? '?delete_file=1' : ''}`);
+    toast(cb.checked ? (res.file_deleted ? 'Entry and file deleted.' : 'Entry deleted; the file was already gone.') : 'Entry deleted. The file was kept.', 'ok');
+    state.history = (state.history || []).filter((x) => x.id !== h.id);
+    if (state.route.view === 'history') drawHistory($('view'));
+  } catch (e) { toastError(e); }
+}
+
+/* ======================================================================== start */
+
+async function start() {
+  applyTheme(store('theme') || 'auto');
+  initShell();
+  try {
+    const info = await api('GET', '/api/app');
+    state.version = info.version;
+    for (const w of info.warnings || []) toast(w, 'warn', 'Data file problem');
+    await loadServers();
+  } catch (e) { toastError(e); }
+  renderSideLinks();
+  window.addEventListener('hashchange', route);
+  route();
+  pollJobs();
+}
+start();
+</script>
 </body>
 </html>
