@@ -21,6 +21,13 @@ so Claude could not click through it). Then mark Step 6 done and start Step 7.
   History can open and delete the folder; it is not offered as a restore source (each file can be restored
   on its own with "File on this PC"). Tests: `tests/test_functions_backup.py` (4 need PostgreSQL).
 
+**Step 8 — SQL workspace: 8a, 8b, 8c clicked through by the user (2026-10-28); part 8d BUILT (2026-10-28), tests
+with PostgreSQL and click-through pending.** 8a console, 8b explorer / table viewer / DDL, 8c grid tools and the
+editable grid, 8d EXPLAIN / EXPLAIN ANALYZE plan view (ANALYZE always rolled back) and the SQL formatter.
+Design: ARCHITECTURE §14 (§14.6 8b, §14.7 8c, §14.8 8d), decision 009. Tests: `tests/test_step8_*.py` (need
+PostgreSQL). Next: the user runs the full suite and the §14.8 click-through; then Step 8 is done. Still open from
+before: Step 6 click-through, Step 7 (end-to-end tests, README, push to git when the user asks).
+
 How to start a new session (PowerShell, in this folder):
 ```
 $env:PGPASSWORD = '<postgres password>'
@@ -65,6 +72,7 @@ closes.
 | 5 | JSON API | ✅ Done — full suite 471 passed + flaky Step 4 test replaced, re-run 18/18 (2026-10-27) |
 | 6 | UI | 🔨 Built (approved 2026-10-27); static checks 11/11; click-through pending |
 | 7 | End-to-end + docs (README) | ⏳ Not started — then push to git |
+| 8 | SQL workspace (8a–8d) | 🔨 8a–8c done, 8d built (2026-10-28); click-through pending |
 
 ## What works now (engine, storage, jobs, database management, JSON API; no UI yet)
 - **Backup** (`engine/backup.py`):

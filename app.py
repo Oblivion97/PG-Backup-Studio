@@ -8,6 +8,7 @@ stored are asked for once and kept in memory only (`Passwords`).
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import re
@@ -20,7 +21,8 @@ from flask import Flask, g, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 import jobs
-from engine import catalog, db
+from engine import catalog, db, explore
+from engine.console import ConsoleError, ConsoleManager
 from engine.precheck import run_precheck
 from engine.util import EngineError
 from jobs import JobError, JobManager
@@ -28,13 +30,14 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.8.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 GUARD_HEADER = "X-PGBS"
 STATUS = {"invalid": 400, "failed": 400, "password_required": 401, "protected": 403, "permission": 403,
           "forbidden": 403, "not_found": 404, "exists": 409, "in_use": 409, "conflict": 409, "busy": 409,
-          "readonly": 409}
+          "readonly": 409, "limit": 409, "session_lost": 410}
 _AUTH_FAILED = re.compile(r"password authentication failed|no password supplied|password is required", re.I)
 
 
@@ -97,14 +100,16 @@ def open_in_file_manager(path: str) -> str:
     return target
 
 
-def create_app(store: Store | None = None, manager: JobManager | None = None) -> Flask:
+def create_app(store: Store | None = None, manager: JobManager | None = None,
+               consoles: ConsoleManager | None = None) -> Flask:
     """Build the Flask application and register its routes."""
     app = Flask(__name__, static_folder=None)
     app.json.sort_keys = False
     store = store or Store()
     manager = manager or jobs.init(store)
+    consoles = consoles or ConsoleManager()
     passwords = Passwords()
-    app.config.update(PGBS_STORE=store, PGBS_MANAGER=manager, PGBS_PASSWORDS=passwords)
+    app.config.update(PGBS_STORE=store, PGBS_MANAGER=manager, PGBS_PASSWORDS=passwords, PGBS_CONSOLES=consoles)
 
     # ------------------------------------------------------------ helpers
 
@@ -180,6 +185,7 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
 
     @app.errorhandler(StoreError)
     @app.errorhandler(JobError)
+    @app.errorhandler(ConsoleError)
     def on_coded(e):
         return error(str(e), e.code)
 
@@ -208,6 +214,12 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
     @app.get("/")
     def index():
         return send_from_directory(STATIC_DIR, "index.html")
+
+    @app.get("/ws/<name>")
+    def workspace_script(name):
+        if name not in WORKSPACE_SCRIPTS:
+            return error("Not found.", "not_found")
+        return send_from_directory(STATIC_DIR, name, mimetype="text/javascript")
 
     @app.get("/api/app")
     def app_info():
@@ -315,6 +327,7 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
         confirm = body().get("confirm")
         server = server_for(sid)
         no_running_job(sid, name, "drop")
+        consoles.close_for(sid, name)
         result = db.drop_database(server, name, confirm=confirm)
         store.delete_profile(sid, name)
         return result
@@ -324,6 +337,7 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
         new_name = field(body(), "new_name")
         server = server_for(sid)
         no_running_job(sid, name, "rename")
+        consoles.close_for(sid, name)
         return db.rename_database(server, name, new_name)
 
     @app.post("/api/servers/<sid>/databases/<name>/kill")
@@ -426,6 +440,121 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
             raise ApiError("This job is not known.", "not_found")
         return {"cancelled": manager.cancel_job(job_id)}
 
+    # ------------------------------------------------------------ SQL workspace (Step 8)
+
+    def number(data: dict, key: str, default):
+        value = data.get(key, default)
+        if value is None:
+            return default
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ApiError(f"'{key}' must be a number.")
+        return value
+
+    @app.post("/api/servers/<sid>/databases/<name>/console")
+    def console_open(sid, name):
+        server = server_for(sid)
+        try:
+            return consoles.open(server, name)
+        except EngineError as e:
+            if db._missing_database(e):
+                raise ApiError(f"Database {name} does not exist.", "not_found") from e
+            raise
+
+    @app.delete("/api/console/<session_id>")
+    def console_close(session_id):
+        return {"closed": consoles.close(session_id)}
+
+    @app.post("/api/console/<session_id>/execute")
+    def console_execute(session_id):
+        data = body()
+        max_rows = number(data, "max_rows", 1000)
+        if isinstance(max_rows, float):
+            max_rows = int(max_rows) if max_rows.is_integer() else -1
+        return consoles.execute(session_id, field(data, "sql"), max_rows=max_rows,
+                                timeout_s=number(data, "timeout_s", 0))
+
+    @app.post("/api/console/<session_id>/cancel")
+    def console_cancel(session_id):
+        return {"cancelled": consoles.cancel(session_id)}
+
+    @app.post("/api/console/<session_id>/mode")
+    def console_mode(session_id):
+        return consoles.set_mode(session_id, field(body(), "mode"))
+
+    @app.post("/api/console/<session_id>/commit")
+    def console_commit(session_id):
+        return consoles.commit(session_id)
+
+    @app.post("/api/console/<session_id>/rollback")
+    def console_rollback(session_id):
+        return consoles.rollback(session_id)
+
+    @app.post("/api/console/<session_id>/table-data")
+    def console_table_data(session_id):
+        data = body()
+        return consoles.table_data(session_id, field(data, "schema"), field(data, "table"),
+                                   where=field(data, "where", required=False) or "",
+                                   order_by=field(data, "order_by", list, required=False) or [],
+                                   limit=number(data, "limit", 100), offset=number(data, "offset", 0),
+                                   count=bool(field(data, "count", bool, required=False)))
+
+    @app.post("/api/console/<session_id>/explain")
+    def console_explain(session_id):
+        data = body()
+        return consoles.explain(session_id, field(data, "sql"), analyze=bool(field(data, "analyze", bool, required=False)),
+                                timeout_s=number(data, "timeout_s", 0))
+
+    @app.post("/api/console/<session_id>/apply-edits")
+    def console_apply_edits(session_id):
+        data = body()
+        preview = request.args.get("preview", "").lower() in ("1", "true", "yes")
+        return consoles.apply_edits(session_id, field(data, "schema"), field(data, "table"),
+                                    field(data, "changes", list), preview=preview)
+
+    def metadata(sid: str, name: str, read):
+        """Run `read(conn)` on a short-lived connection to database `name`."""
+        conn = database_connection(server_for(sid), name)
+        try:
+            return read(conn)
+        finally:
+            conn.close()
+
+    def arg(key: str) -> str:
+        value = request.args.get(key)
+        if not value:
+            raise ApiError(f"'{key}' is required.")
+        return value
+
+    @app.get("/api/servers/<sid>/databases/<name>/completions")
+    def databases_completions(sid, name):
+        return metadata(sid, name, explore.completions)
+
+    @app.get("/api/servers/<sid>/databases/<name>/columns")
+    def databases_columns(sid, name):
+        schema, table = arg("schema"), arg("table")
+        return jsonify(metadata(sid, name, lambda conn: explore.columns(conn, schema, table)))
+
+    @app.get("/api/servers/<sid>/databases/<name>/explorer")
+    def databases_explorer(sid, name):
+        schema = request.args.get("schema")
+        if schema:
+            return metadata(sid, name, lambda conn: explore.objects(conn, schema))
+        return {"schemas": metadata(sid, name, explore.schemas)}
+
+    @app.get("/api/servers/<sid>/databases/<name>/object")
+    def databases_object(sid, name):
+        schema, obj = arg("schema"), arg("name")
+        return metadata(sid, name, lambda conn: explore.object_detail(conn, schema, obj))
+
+    @app.get("/api/servers/<sid>/databases/<name>/ddl")
+    def databases_ddl(sid, name):
+        schema, kind = arg("schema"), arg("kind")
+        oid = request.args.get("oid")
+        if oid is not None and not oid.isdigit():
+            raise ApiError("'oid' must be a number.")
+        return metadata(sid, name, lambda conn: explore.ddl(conn, schema, kind, request.args.get("name"),
+                                                            int(oid) if oid else None))
+
     # ------------------------------------------------------------ history and settings
 
     @app.get("/api/history")
@@ -464,6 +593,7 @@ def main() -> None:
     """Run the server on 127.0.0.1 (port from PORT, default 8000)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     app = create_app()
+    atexit.register(app.config["PGBS_CONSOLES"].close_all)
     app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 8000)), threaded=True)
 
 

@@ -388,6 +388,9 @@ details.adv > div { margin-top: 12px; }
   </main>
 </div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="ws/grid.js"></script>
+<script src="ws/console.js"></script>
+<script src="ws/explorer.js"></script>
 <script>
 'use strict';
 
@@ -424,6 +427,7 @@ const ICONS = {
   file: ['M14 3H6v18h12V7z', 'M14 3v4h4'],
   sun: ['M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z', 'M12 1v2', 'M12 21v2', 'M4.2 4.2l1.4 1.4', 'M18.4 18.4l1.4 1.4', 'M1 12h2', 'M21 12h2', 'M4.2 19.8l1.4-1.4', 'M18.4 5.6l1.4-1.4'],
   moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
+  code: ['M16 18l6-6-6-6', 'M8 6l-6 6 6 6'],
   link: ['M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7', 'M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7'],
 };
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -786,7 +790,7 @@ function go(hash) { if (location.hash === hash) route(); else location.hash = ha
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map((p) => { try { return decodeURIComponent(p); } catch (e) { return p; } });
   if (parts[0] === 's' && parts[1]) {
-    const tab = ['databases', 'backup', 'restore'].includes(parts[2]) ? parts[2] : 'databases';
+    const tab = ['databases', 'backup', 'restore', 'query'].includes(parts[2]) ? parts[2] : 'databases';
     return { view: tab, sid: parts[1], db: parts[3] || null };
   }
   if (parts[0] === 'activity') return { view: 'activity', job: parts[1] || null };
@@ -813,7 +817,9 @@ function route() {
   renderHeader();
   const view = $('view');
   $('content').scrollTop = 0;
-  ({ home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
+  $('content').classList.toggle('ws', r.view === 'query');
+  if (r.view !== 'query' && typeof wsCloseAc === 'function') wsCloseAc();
+  ({ query: viewQuery, home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
 }
 
 function renderHeader() {
@@ -833,9 +839,10 @@ function renderHeader() {
     tabLink('databases', 'Databases', 'db', base && base + '/databases'),
     tabLink('backup', 'Backup', 'backup', base && base + '/backup' + (r.view === 'backup' && r.db ? '/' + enc(r.db) : '')),
     tabLink('restore', 'Restore', 'restore', base && base + '/restore'),
+    tabLink('query', 'Query', 'code', base && base + '/query' + (r.view === 'query' && r.db ? '/' + enc(r.db) : '')),
     tabLink('activity', 'Activity', 'activity', '#/activity', n),
     tabLink('history', 'History', 'history', '#/history'));
-  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', activity: 'Activity', history: 'History' };
+  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', query: 'SQL workspace', activity: 'Activity', history: 'History' };
   if (s) {
     clear(crumbs, icon('server'), el('b', { text: s.name }), el('span', { class: 'mono', text: `${s.user}@${s.host}:${s.port}` }),
       info ? el('span', { class: 'badge', text: 'PostgreSQL ' + info.version.split(' ')[0] }) : null,
@@ -1135,6 +1142,7 @@ function dbRow(sid, r, info) {
     el('td', { class: 'subtle', text: r.collation || '' }),
     el('td', { class: 'num' }, r.connections ? el('span', { class: 'badge ' + (r.connections > 10 ? 'warn' : '') }, fmt.num(r.connections)) : el('span', { class: 'subtle', text: '0' })),
     el('td', null, el('div', { class: 'actions' },
+      el('a', { class: 'btn sm', href: `#/s/${enc(sid)}/query/${enc(r.name)}`, title: 'Open in the SQL workspace' }, icon('code'), 'Query'),
       el('a', { class: 'btn sm', href: `#/s/${enc(sid)}/backup/${enc(r.name)}` }, icon('backup'), 'Backup'),
       el('button', { class: 'btn sm', type: 'button', onclick: () => { state.restorePrefill = { target: r.name }; go(`#/s/${enc(sid)}/restore`); } }, icon('restore'), 'Restore'),
       more)));
