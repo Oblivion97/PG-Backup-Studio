@@ -969,3 +969,161 @@ Click-through in Chrome against PG 18 (QA, screenshots in the QA report):
 10. History: Partial badge, Open folder, delete an entry with and without the file.
 11. Hostile DB name `pgbs_test_<img src=x onerror=alert(1)>` shows as text everywhere.
 12. Dark mode; 1280 px and 1024 px widths; reload on each tab keeps the place.
+
+## 14. Step 8 design — SQL workspace (2026-10-28, approved)
+
+DataGrip-style workspace on the Query tab (`#/s/<sid>/query/<db>`). Decision record: `decisions/009-sql-workspace.md`.
+Built in parts: **8a** console (done), **8b** explorer + table viewer + DDL (done), **8c** grid tools + editable grid (done), **8d** EXPLAIN + formatter (done).
+
+### 14.1 Pieces
+| Piece | File | Role |
+|---|---|---|
+| Sessions | `engine/console.py` (`ConsoleManager`) | one open connection per query tab; execute, cancel, auto/manual transactions, idle close |
+| Metadata | `engine/explore.py` | names for suggestions (`completions`), columns; 8b adds objects, details, DDL |
+| API | `app.py` | routes below, behind the Step 5 guard; scripts at `/ws/<name>` from `WORKSPACE_SCRIPTS` |
+| Editor + tabs | `static/console.js` | textarea over highlighted `<pre>`, suggestions, keys, tabs, transactions, history |
+| Grid | `static/grid.js` | only visible rows in the DOM; selection, sort, filter, resize, hide, copy / export formats, value viewer, editing (8c) |
+| Explorer | `static/explorer.js` | object tree, table viewer tabs, DDL view (8b) |
+
+### 14.2 Routes (8a)
+| Route | Answer |
+|---|---|
+| `POST /api/servers/<sid>/databases/<name>/console` | `{session_id, mode, tx_status, ...}` |
+| `DELETE /api/console/<id>` | `{closed}` |
+| `POST /api/console/<id>/execute {sql, max_rows, timeout_s}` | `{results: [{statement, line, status, columns[{name, type, type_oid, table_oid, table_col}], rows, row_count, truncated, has_rows, notices, duration_ms, error{message, sqlstate, line, position, detail, hint}}], mode, tx_status}` |
+| `POST /api/console/<id>/cancel` | `{cancelled}`; answered while execute runs |
+| `POST /api/console/<id>/mode {mode: auto|manual}`, `/commit`, `/rollback` | session state |
+| `GET .../completions` | `{schemas, search_path, relations[{schema, name, kind, system}], functions[{schema, name, args, result, kind}], builtin_functions}` |
+| `GET .../columns?schema=&table=` | `[{name, type, nullable, default, pk}]` |
+Codes: `busy` 409 (a statement is running in that tab), `limit` 409 (16 sessions), `session_lost` 410 (closed or connection
+lost; the page reconnects and repeats the run once unless a transaction was open).
+
+### 14.3 How execute runs
+1. Split with the restore splitter (`split_sql`); `COPY FROM STDIN` is refused with a hint.
+2. Per statement, stop at the first error:
+   - row queries (SELECT / WITH / VALUES / TABLE): `DECLARE cursor` + `FETCH max_rows + 1` inside a transaction (or a
+     savepoint when one is open); DECLARE refused → run normally
+   - anything else: run as typed (auto-commit)
+   - manual mode: `BEGIN` when idle, every statement in a savepoint; an error rolls back to it
+   - typed `BEGIN` / `COMMIT` / `ROLLBACK` / `SAVEPOINT` run without a wrapper
+3. Values are PostgreSQL's text output; type names from `format_type` (cached per session).
+4. The error line is the statement's start line plus the newlines before `statement_position`.
+
+### 14.4 Suggestions
+Context from the tokens before the caret in the current statement:
+- after `FROM` / `JOIN` / `INTO` / `UPDATE` / `TABLE` (or a comma in a FROM list): tables, views, schemas
+- after `x.`: columns when `x` is a table or alias of the statement, else that schema's tables and functions
+- otherwise: columns of the statement's tables, keywords, snippets, tables, functions
+Ranking: prefix, then after `_`, then contains; kind; length. Columns load on first use and the popup refreshes.
+
+### 14.5 Test plan (8a)
+Automated: `tests/test_step8_console.py` (types as text, row cap with a 20M-row query, multi-statement stop and error
+line, auto-commit, DECLARE fallback, notices, timeout, cancel, manual mode with errors, typed BEGIN, idle close and limit,
+API round trip with no password in any answer, completions, columns); `tests/test_step6_ui.py` scans the workspace
+scripts too (routes, no innerHTML / eval / dialogs, one fetch).
+Click-through: suggestions after `FROM`, `alias.` and `schema.`; Ctrl+Enter on one statement; three statements with an
+error in the 2nd (line marked); Cancel `pg_sleep(30)`; manual mode Commit / Rollback; reload keeps tabs; dark mode.
+
+### 14.6 Part 8b: explorer, table viewer, DDL (built 2026-10-28)
+| Route | Answer |
+|---|---|
+| `GET .../explorer` | `{schemas: [{name, owner, comment, system}]}` (no toast/temp schemas; user schemas first) |
+| `GET .../explorer?schema=` | `{tables, views, matviews, foreign, sequences: [{oid, name, rows, size, comment, partitioned}], functions, procedures, aggregates: [{oid, name, args, result}], types: [{oid, name, kind}], truncated}`; partitions left out (the parent shows all rows); 20,000 per list |
+| `GET .../object?schema=&name=` | `{kind, rows, size, comment, columns[{name, type, nullable, default, pk, comment}], constraints[{name, kind, def}], indexes[{name, def, primary, unique, size}], triggers[{name, def, enabled}]}` |
+| `GET .../ddl?schema=&kind=&name=` or `&oid=` (routines) | `{name, ddl}` |
+| `POST /api/console/<id>/table-data {schema, table, where, order_by[{column, desc}], limit, offset, count}` | `{result, has_more, count, sql, mode, tx_status}` |
+
+- **DDL** reuses the backup's plan builder (`_PlanBuilder`, mode schema) on `catalog.load_all` of the object's schema and
+  keeps the nodes that belong to the object: for a table its defaults, constraints, indexes, statistics, triggers, rules,
+  policies, row security and the sequences it owns; for a type its domain constraints. So the DDL is exactly what a
+  schema backup writes (owner, grants, comments included). System schemas and extension members fall back to
+  `pg_get_viewdef` / `pg_get_functiondef`, else a comment saying there is no DDL.
+- **Table viewer** runs in the tab's own console session (so in manual mode it sees the open transaction):
+  `SELECT * FROM "schema"."table" WHERE (<filter>) ORDER BY "col" [DESC], ... LIMIT n+1 OFFSET m` through the cursor path;
+  the extra row tells whether a next page exists. Names are always quoted; the filter is used as typed (full access) but
+  must not contain `;` outside quotes and comments. `count` adds `SELECT count(*)` with the same filter.
+- **Frontend** (`static/explorer.js`): explorer panel left of the editor (resizable, can be hidden): schemas → groups
+  (Tables, Views, Materialized views, Foreign tables, Sequences, Functions, Procedures, Aggregates, Types) → objects →
+  Columns / Keys and constraints / Indexes / Triggers. Loaded lazily, filter box over the loaded schemas, 300 rows per
+  group drawn. Double-click a table or view opens a table viewer tab (detected from two clicks on the same row, because each click
+  redraws the tree); one click on a function, procedure, sequence or type shows its DDL.
+  Right-click: Open data, New query, Show DDL, Copy name / qualified name, Refresh. Table viewer: WHERE box, page size
+  100–5,000, Prev / Next, Count, header click sorts (Shift+click adds a column), "Open as a query". A successful
+  CREATE / ALTER / DROP / COMMENT in a query tab refreshes the explorer and the suggestions.
+- **Tests:** `tests/test_step8_explorer.py` (schemas, grouping, detail, table DDL round trip into an empty database,
+  DDL of functions with overloads, views, matviews, sequences, enum, domain, hostile names, system fallback; table
+  viewer paging, filter, multi-column sort, count, hostile names and injection attempts in sort columns, open
+  transaction; API round trip without the password).
+- **Click-through:** explorer opens `public`; expand a table to see columns / indexes; filter; double-click a table →
+  data, sort by a header, Shift+click a second, WHERE, next page, Count; right-click → Show DDL → Open in a query tab;
+  CREATE TABLE in a query tab → it appears in the explorer; hide / show the explorer; reload keeps table tabs.
+
+### 14.7 Part 8c: grid tools and editable grid (built 2026-10-28)
+**Grid tools** (`static/grid.js`, state kept on the result object so it survives redraws):
+- sort by a header on the client (asc → desc → off, NULLs last, numbers as numbers); the table viewer sorts on the
+  server instead
+- filter row (Filter button or header menu): per column "contains", any case; `NULL` matches NULL; on loaded rows only
+- resize columns (drag a header edge), hide columns (header menu), "N hidden" brings them back
+- range selection: click, Shift+click, drag, Shift+arrows, Ctrl+A; PageUp / PageDown / Home / End
+- copy the selection (Ctrl+C = TSV without header) or as CSV, JSON, INSERT, Markdown; export the rows shown (filter,
+  sort, hidden columns and unsaved edits apply; rows marked deleted left out) to a CSV / JSON / SQL / Markdown / TSV
+  file (Blob download, nothing leaves the machine)
+- value viewer: full value, JSON pretty-printed, Copy; editable when the cell is
+- double-click detection is done on mousedown (rows are redrawn on every selection)
+
+**Editable results.** The server decides, for every row result (`_editable` in `engine/console.py`): all columns come
+straight from one table (`ftable` / `ftablecol`), it is a table (not a view), it has a primary key and every key column
+is in the result. Then `editable = {schema, table, columns: [table column per result column], key: [result indexes]}`,
+else `readonly` holds the reason shown in the grid toolbar. Aliased columns work (`SELECT name AS n, id`).
+
+**Editing:** Enter / F2 / double-click / typing edits a cell (multi-line or long values open the value editor);
+right-click: Set NULL, Set DEFAULT, Duplicate row, Delete row (Delete key; again to undo), Revert selected rows;
+toolbar: + Row, Delete, Revert, Preview SQL, Submit. Pending cells are yellow, deleted rows struck through, added rows
+green. Running another statement, paging, reloading or closing the tab asks before dropping unsaved changes.
+
+| Route | Answer |
+|---|---|
+| `POST /api/console/<id>/apply-edits {schema, table, changes}` `?preview=1` | `{statements, applied, error: null or {index, message, sqlstate, detail, hint, conflict}, mode, tx_status}` |
+
+- changes: `{op: update, key, set}`, `{op: insert, values}`, `{op: delete, key}`; a value is text (cast to the column
+  type), `null`, or `{"default": true}`. `key` must give exactly the primary key columns.
+- Column names, types and the key come from the catalog at apply time; values are quoted literals cast to
+  `format_type(...)`, so the preview is exactly what runs. Generated columns cannot be set. Deletes run first, then
+  updates, then inserts.
+- Auto-commit: one transaction. Manual (or a typed BEGIN): inside the open transaction (BEGIN when idle in manual
+  mode), behind a savepoint. An UPDATE / DELETE that touches no row or more than one undoes the whole batch
+  (`conflict`), as does any error. A failed transaction is refused ("roll it back first").
+- After a save the query tab runs the statement again; the table viewer reloads the page.
+
+**Tests:** `tests/test_step8_edit.py` (which results are editable and why not; update / insert / delete with numeric,
+jsonb, bytea, arrays, enum, timestamptz, NULL, DEFAULT, generated column; composite key; preview equals what runs;
+conflict and error undo the batch; manual mode keeps the transaction and undoes only the batch; hostile names and
+values; catalog-checked columns and keys; failed transaction refused; API). Grid logic (formats, pending changes,
+client sort / filter) checked with Node.
+**Click-through:** run `SELECT * FROM t` → edit a cell, add a row, delete a row → Preview SQL → Submit; Revert;
+SET NULL / DEFAULT; a join result says why it is read-only; filter row, sort, resize, hide; copy as INSERT; export
+CSV; value viewer on a jsonb cell; manual mode: submit then Rollback; table viewer edit then next page asks first.
+
+### 14.8 Part 8d: EXPLAIN and the SQL formatter (built 2026-10-28)
+| Route | Answer |
+|---|---|
+| `POST /api/console/<id>/explain {sql, analyze, timeout_s}` | `{plan, statement, analyze, rolled_back, duration_ms, notices, error, mode, tx_status}` |
+
+- One statement only (the selection or the statement at the cursor); a statement that already starts with EXPLAIN is
+  refused. `EXPLAIN (FORMAT JSON)`; with `analyze`: `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` inside `BEGIN ... ROLLBACK`,
+  or a savepoint rolled back when a transaction is open, so nothing the statement changes is kept and an open manual
+  transaction is untouched. A failed transaction is refused. Error positions have the EXPLAIN prefix taken off.
+- **Plan tab** (`wxPlanView` in `static/explorer.js`) next to the result tabs: summary (planning / execution time, total
+  cost, "changes rolled back"), one row per node with relation / index, conditions, rows estimated → actual, loops,
+  self / total time (self / total cost without ANALYZE), startup cost, buffers; a bar for each node's share; the slowest
+  node in red; estimates off by 10× or more flagged; click a node for all its fields; collapse sub-trees; Copy JSON;
+  Again. Shortcuts: Ctrl+E explain, Ctrl+Shift+E explain analyze; "Explain" button menu.
+- **Formatter** (`sqlFormat` in `static/console.js`, Ctrl+Shift+F or Ctrl+Alt+L, More → Format SQL): formats the
+  selection or the whole editor through the undo history. Keywords upper case (not after `.` or `::`), one major clause
+  per line, joins on their own line, select / SET / RETURNING lists and WHERE / HAVING / ON conditions one per line
+  (not the AND of BETWEEN), subqueries indented; strings, quoted names, comments and `$$` bodies kept as written;
+  formatting twice gives the same text.
+- **Tests:** `tests/test_step8_explain.py` (plan without running, ANALYZE rolled back, manual mode keeps the transaction,
+  errors with line and position, timeout, API); formatter and plan maths checked with Node.
+- **Click-through:** Ctrl+E on a SELECT; Ctrl+Shift+E on a DELETE → the plan shows actual rows and the rows are still
+  there; a join with a bad estimate shows the warning; click a node; Format a long one-line query, then Ctrl+Z.

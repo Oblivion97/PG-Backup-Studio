@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from werkzeug.exceptions import MethodNotAllowed, NotFound
 
-from app import create_app
+from app import WORKSPACE_SCRIPTS, create_app
 from jobs import JobManager
 from store import Store
 
@@ -26,6 +26,12 @@ def script(html) -> str:
     blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
     assert len(blocks) == 1, "the page has exactly one inline script"
     return blocks[0]
+
+
+@pytest.fixture(scope="module")
+def all_scripts(script) -> str:
+    """The inline script plus the SQL workspace scripts it loads (Step 8)."""
+    return "\n".join([script] + [(PAGE.parent / n).read_text(encoding="utf-8") for n in WORKSPACE_SCRIPTS])
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +63,10 @@ def test_page_size_budget(html):
 
 
 def test_no_external_resources(html):
-    assert not re.search(r"<script[^>]+src=", html, re.I)
+    # the only script files are the app's own workspace scripts, by relative path (Step 8)
+    srcs = re.findall(r"<script[^>]+src=[\"']([^\"']*)", html, re.I)
+    assert srcs == ["ws/grid.js", "ws/console.js", "ws/explorer.js"], srcs
+    assert set(srcs) <= {f"ws/{n}" for n in WORKSPACE_SCRIPTS}
     assert not re.search(r"<link[^>]+href=", html, re.I)
     assert not re.search(r"@import|url\(\s*['\"]?https?:", html, re.I)
     # the only absolute URL allowed is the SVG namespace
@@ -72,8 +81,8 @@ def test_light_and_dark_mode(html):
 
 # ---------------------------------------------------------------- 2. every API call matches a route
 
-def test_every_api_call_matches_a_flask_route(flask_app, script):
-    calls = api_calls(script)
+def test_every_api_call_matches_a_flask_route(flask_app, all_scripts):
+    calls = api_calls(all_scripts)
     assert len(calls) >= 25, f"expected the UI to use most of the API, found {len(calls)} calls"
     adapter = flask_app.url_map.bind("127.0.0.1")
     bad = []
@@ -85,11 +94,11 @@ def test_every_api_call_matches_a_flask_route(flask_app, script):
     assert not bad, bad
 
 
-def test_ui_covers_every_api_route(flask_app, script):
-    """Each API rule is used by at least one call in the page."""
+def test_ui_covers_every_api_route(flask_app, all_scripts):
+    """Each API rule is used by at least one call in the page or the workspace scripts."""
     adapter = flask_app.url_map.bind("127.0.0.1")
     used = set()
-    for method, path in api_calls(script):
+    for method, path in api_calls(all_scripts):
         endpoint, _ = adapter.match(path, method=method)
         used.add((endpoint, method))
     rules = {(r.endpoint, m) for r in flask_app.url_map.iter_rules() if r.rule.startswith("/api/")
@@ -97,23 +106,23 @@ def test_ui_covers_every_api_route(flask_app, script):
     assert not rules - used, sorted(rules - used)
 
 
-def test_requests_carry_the_guard_header_and_go_through_api(script):
+def test_requests_carry_the_guard_header_and_go_through_api(script, all_scripts):
     assert "'X-PGBS': '1'" in script
     # the only fetch() is the one inside api()
-    assert len(re.findall(r"\bfetch\(", script)) == 1
-    assert "XMLHttpRequest" not in script
+    assert len(re.findall(r"\bfetch\(", all_scripts)) == 1
+    assert "XMLHttpRequest" not in all_scripts
 
 
 # ---------------------------------------------------------------- 3. no HTML injection, no browser dialogs
 
-def test_no_html_parsing_of_variables(script):
+def test_no_html_parsing_of_variables(all_scripts):
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "createContextualFragment"):
-        assert sink not in script, f"{sink} is not allowed (decision 008 §2)"
+        assert sink not in all_scripts, f"{sink} is not allowed (decision 008 §2)"
 
 
-def test_no_browser_dialogs_or_eval(script):
+def test_no_browser_dialogs_or_eval(all_scripts):
     for bad in (r"\balert\(", r"\bconfirm\(", r"\bprompt\(", r"\beval\(", r"new Function\("):
-        assert not re.search(bad, script), bad
+        assert not re.search(bad, all_scripts), bad
 
 
 def test_text_goes_through_text_nodes(script):
