@@ -159,7 +159,8 @@ class Job:
                    "file": self.file if self.kind == "backup" else self.source, "progress": progress,
                    "error_count": self.error_count, "warning_count": self.warning_count,
                    "log_seq": self.log_seq, "result": copy.deepcopy(self.result), "error": self.error,
-                   "history_id": self.id, "history_error": self.history_error}
+                   "history_id": self.id, "history_error": self.history_error,
+                   "mode": self.options.mode if self.kind == "backup" else None}
             if with_log:
                 out["log"] = [dict(x) for x in self.log if log_after is None or x["seq"] > log_after]
             return out
@@ -452,6 +453,9 @@ class JobManager:
         res = res or {}
         if status in ("cancelled", "failed"):
             return error or status.capitalize()
+        if job.kind == "backup" and res.get("mode") == "functions":
+            renamed = f" ({res['renamed']:,} numbered because the name repeats)" if res.get("renamed") else ""
+            return f"Functions backed up: {res.get('objects', 0):,} files{renamed} → {res.get('file')}"
         if job.kind == "backup":
             partial = " (partial)" if res.get("partial") else ""
             return (f"Backup finished{partial}: {res.get('tables', 0):,} tables, {res.get('rows', 0):,} rows, "
@@ -488,7 +492,8 @@ class JobManager:
                 job.totals_seen = True
                 job.objects_total, job.tables_total = d.get("objects", 0), d.get("tables", 0)
                 job.est_rows, job.data_total = d.get("est_rows", 0), d.get("data_bytes", 0)
-                job.add_log("info", f"{job.objects_total:,} objects and {job.tables_total:,} tables to back up")
+                job.add_log("info", f"{job.objects_total:,} functions to back up" if job.options.mode == "functions"
+                            else f"{job.objects_total:,} objects and {job.tables_total:,} tables to back up")
             else:
                 job.file_size = d.get("file_size", 0)
         elif event == "file":

@@ -48,7 +48,7 @@ def api_calls(script: str) -> list[tuple[str, str]]:
 def test_page_is_served_without_the_guard_header(flask_app, html):
     r = flask_app.test_client().get("/")
     assert r.status_code == 200
-    assert r.get_data(as_text=True) == html
+    assert r.get_data() == PAGE.read_bytes()   # bytes: a CRLF checkout (core.autocrlf) must still match
     assert "text/html" in r.content_type
 
 

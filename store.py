@@ -76,6 +76,20 @@ def _number(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def _delete_function_folder(path: str) -> bool:
+    """Delete the `.sql` files of a functions backup, then the folder when nothing else is left in it."""
+    try:
+        for name in os.listdir(path):
+            full = os.path.join(path, name)
+            if name.lower().endswith(".sql") and os.path.isfile(full):
+                os.remove(full)
+        if not os.listdir(path):
+            os.rmdir(path)
+    except OSError as e:
+        raise StoreError(f"Could not delete {path}: {e.strerror or e}") from e
+    return True
+
+
 class Store:
     """All four JSON files of one data folder; thread-safe (one lock per folder in this process)."""
 
@@ -399,7 +413,8 @@ class Store:
             return [dict(e) for e in reversed(self._entries(self._read(HISTORY)))]
 
     def delete_history(self, entry_id: str, *, delete_file: bool = False) -> dict | None:
-        """Remove an entry; with `delete_file` also the backup file it points to (only `.sql`/`.sql.gz`)."""
+        """Remove an entry; with `delete_file` also the backup file it points to (only `.sql`/`.sql.gz`),
+        or the `.sql` files of a functions backup folder (the folder too once it is empty)."""
         with self.lock:
             doc = self._read(HISTORY)
             entry = next((e for e in self._entries(doc) if e["id"] == entry_id), None)
@@ -414,6 +429,9 @@ class Store:
                     deleted = True
                 except OSError as e:
                     raise StoreError(f"Could not delete {path}: {e.strerror or e}") from e
+            elif (delete_file and entry.get("kind") == "backup" and entry.get("mode") == "functions"
+                    and isinstance(path, str) and os.path.isdir(path)):
+                deleted = _delete_function_folder(path)
             doc["entries"].remove(entry)
             self._write(HISTORY, doc)
             return {**entry, "file_deleted": deleted}

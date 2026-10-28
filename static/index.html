@@ -279,6 +279,7 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border-
 .errlist { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow: auto; }
 .erritem { border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: var(--radius-sm); padding: 8px 12px; background: var(--surface-2); }
 .erritem.warning { border-left-color: var(--warn); }
+.erritem.file { border-left-color: var(--border-strong); }
 .erritem .o { font-weight: 600; font-size: 13px; }
 .erritem pre { margin: 6px 0 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word; color: var(--fg-2); }
 
@@ -1252,12 +1253,13 @@ async function killDb(sid, r) {
 /* ======================================================================== backup */
 
 const tkey = (schema, table) => schema + '\u0000' + table;
+const MODE_LABEL = { schema: 'schema only', data: 'data only', functions: 'functions only' };
 
 function defaultBackup(sid, dbName, settings) {
   return { sid, db: dbName, schemasAll: null, schemas: null, mode: 'full', privileges: true, gzip: false,
     out_dir: (settings && settings.output_dir) || '~/pg_backups', filename: '', lock_timeout_s: 10, speed_limit_mb_s: '',
     opts: new Map(), check: null, checkKey: null, checking: false, checkError: null, profileSavedAt: null,
-    filter: '', largeOnly: null, loaded: false };
+    filter: '', show: 'all', sort: 'size', page: 0, sel: new Set(), loaded: false };
 }
 
 async function viewBackup(view, token) {
@@ -1331,16 +1333,17 @@ function backupRequestOptions(b) {
     const [schema, table] = k.split('\u0000');
     tables.push(o.data === 'latest' ? { schema, table, data: 'latest', order_by: o.order_by, limit: Number(o.limit) } : { schema, table, data: o.data });
   }
-  return { schemas: allSchemas ? null : b.schemasAll.filter((s) => b.schemas.has(s)), mode: b.mode, tables };
+  return { schemas: allSchemas ? null : b.schemasAll.filter((s) => b.schemas.has(s)), mode: b.mode, tables: b.mode === 'functions' ? [] : tables };
 }
 function checkKeyOf(b) { return JSON.stringify(backupRequestOptions(b)); }
-function checkIsStale(b) { return !b.check || b.checkKey !== checkKeyOf(b); }
+function checkIsStale(b) { return b.mode !== 'functions' && (!b.check || b.checkKey !== checkKeyOf(b)); }
 
 async function runCheck() {
   const b = state.backup;
   if (!b) return null;
   const req = backupRequestOptions(b);
   if (req.schemas && !req.schemas.length) { b.check = null; b.checkError = 'Select at least one schema.'; refreshBackup(); return null; }
+  if (b.mode === 'functions') { refreshBackup(); return null; }   // no tables are read: nothing to check
   const key = JSON.stringify(req);
   b.checking = true;
   b.checkError = null;
@@ -1355,7 +1358,6 @@ async function runCheck() {
       const cur = b.opts.get(k);
       b.opts.set(k, { data: t.option.data, order_by: (cur && cur.order_by) || t.option.order_by || t.default_order_column, limit: t.option.limit || 1000 });
     }
-    if (b.largeOnly === null) b.largeOnly = res.tables.length > 50 && res.tables.some((t) => t.large);
     if (res.ignored_options && res.ignored_options.length) {
       toast(`Saved options for ${res.ignored_options.length} table(s) were ignored because the tables no longer exist: ${res.ignored_options.join(', ')}`, 'warn');
     }
@@ -1391,8 +1393,9 @@ function drawBackup(view) {
     el('a', { class: 'btn sm ghost', href: `#/s/${enc(b.sid)}/backup` }, 'Change database')));
 
   // what to back up
-  const modeSeg = el('div', { class: 'radio-cards' }, [['full', 'Full', 'Structure and data'], ['schema', 'Schema only', 'Structure, no rows'], ['data', 'Data only', 'Rows for existing tables']].map(([k, t, d]) =>
-    el('button', { type: 'button', class: 'radio-card' + (b.mode === k ? ' on' : ''), onclick: () => { b.mode = k; changed(); } },
+  const fnMode = b.mode === 'functions';
+  const modeSeg = el('div', { class: 'radio-cards' }, [['full', 'Full', 'Structure and data'], ['schema', 'Schema only', 'Structure, no rows'], ['data', 'Data only', 'Rows for existing tables'], ['functions', 'Functions only', 'One .sql file per function']].map(([k, t, d]) =>
+    el('button', { type: 'button', class: 'radio-card' + (b.mode === k ? ' on' : ''), onclick: () => { b.mode = k; changed(); if (k !== 'functions' && !b.check && !b.checking) runCheck(); } },
       el('span', { class: 't' }, t), el('span', { class: 'd', text: d }))));
   const allOn = b.schemas.size === b.schemasAll.length;
   const schemaChips = el('div', { class: 'chips' }, b.schemasAll.map((sc) => el('label', { class: 'chip' + (b.schemas.has(sc) ? ' on' : '') },
@@ -1408,27 +1411,27 @@ function drawBackup(view) {
       el('div', { class: 'grid-2', style: 'gap: 12px' },
         el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: b.privileges, onchange: (e) => { b.privileges = e.target.checked; } }),
           el('span', null, el('span', { class: 't', text: 'Include owners and grants' }), el('span', { class: 'd', text: 'Turn off to restore as a different user without OWNER errors.' }))),
-        el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: b.gzip, onchange: (e) => { b.gzip = e.target.checked; changed(); } }),
+        fnMode ? null : el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: b.gzip, onchange: (e) => { b.gzip = e.target.checked; changed(); } }),
           el('span', null, el('span', { class: 't', text: 'Compress with gzip' }), el('span', { class: 'd', text: 'Writes .sql.gz; usually 5–10× smaller.' })))))));
 
   // output + advanced
   const out = el('input', { class: 'input mono', value: b.out_dir, onchange: (e) => { b.out_dir = e.target.value; } });
-  const fname = el('input', { class: 'input mono', value: b.filename, placeholder: `${b.db}_YYYYMMDD_HHMMSS${b.gzip ? '.sql.gz' : '.sql'}`, onchange: (e) => { b.filename = e.target.value; } });
+  const fname = el('input', { class: 'input mono', value: b.filename, placeholder: fnMode ? `${b.db}_functions_YYYYMMDD_HHMMSS` : `${b.db}_YYYYMMDD_HHMMSS${b.gzip ? '.sql.gz' : '.sql'}`, onchange: (e) => { b.filename = e.target.value; } });
   const lockT = el('input', { class: 'input', value: String(b.lock_timeout_s), inputmode: 'decimal', onchange: (e) => { b.lock_timeout_s = e.target.value; } });
   const speed = el('input', { class: 'input', value: String(b.speed_limit_mb_s || ''), placeholder: 'No limit', inputmode: 'decimal', onchange: (e) => { b.speed_limit_mb_s = e.target.value; } });
   left.appendChild(el('div', { class: 'card' },
     el('div', { class: 'card-h' }, el('h2', { text: 'Output' })),
     el('div', { class: 'card-b stack' },
       el('div', { class: 'field' }, el('label', null, 'Folder on this PC'), out),
-      el('details', { class: 'adv' }, el('summary', null, icon('chevron'), 'Advanced: file name, lock timeout, speed limit'),
+      el('details', { class: 'adv' }, el('summary', null, icon('chevron'), fnMode ? 'Advanced: folder name' : 'Advanced: file name, lock timeout, speed limit'),
         el('div', { class: 'form-grid' },
-          el('div', { class: 'field span-2' }, el('label', null, 'File name'), fname, el('div', { class: 'hint', text: 'Leave empty for the automatic name. An existing file is never overwritten.' })),
-          el('div', { class: 'field' }, el('label', null, 'Lock timeout (seconds)'), lockT, el('div', { class: 'hint', text: 'Fails cleanly instead of waiting behind DDL.' })),
-          el('div', { class: 'field' }, el('label', null, 'Speed limit (MB/s)'), speed, el('div', { class: 'hint', text: 'Throttles COPY to reduce load on the server.' })))))));
+          el('div', { class: 'field span-2' }, el('label', null, fnMode ? 'Folder name' : 'File name'), fname, el('div', { class: 'hint', text: fnMode ? 'Leave empty for the automatic name. The function files go into this new folder; an existing folder is never used.' : 'Leave empty for the automatic name. An existing file is never overwritten.' })),
+          fnMode ? null : el('div', { class: 'field' }, el('label', null, 'Lock timeout (seconds)'), lockT, el('div', { class: 'hint', text: 'Fails cleanly instead of waiting behind DDL.' })),
+          fnMode ? null : el('div', { class: 'field' }, el('label', null, 'Speed limit (MB/s)'), speed, el('div', { class: 'hint', text: 'Throttles COPY to reduce load on the server.' })))))));
 
   // pre-check
-  left.appendChild(precheckCard(b));
-  left.appendChild(tablesCard(b));
+  if (fnMode) left.appendChild(functionsCard(b));
+  else { left.appendChild(precheckCard(b)); left.appendChild(tablesCard(b)); }
 
   // summary side
   right.appendChild(summaryCard(b));
@@ -1501,6 +1504,8 @@ function setOpt(b, schema, table, patch) {
   b.opts.set(k, Object.assign({ data: 'full', order_by: null, limit: 1000 }, b.opts.get(k) || {}, patch));
 }
 
+const TABLE_PAGE = 100;
+
 function tablesCard(b) {
   const c = b.check;
   const card = el('div', { class: 'card' });
@@ -1509,35 +1514,84 @@ function tablesCard(b) {
   card.appendChild(head);
   if (!c) { card.appendChild(el('div', { class: 'loading' }, el('span', { class: 'spin' }), 'Waiting for the check…')); return card; }
   if (!c.tables.length) { card.appendChild(el('div', { class: 'empty' }, el('p', { text: 'No tables in the selected schemas.' }))); return card; }
-  const filter = el('input', { class: 'input sm', placeholder: 'Filter tables', value: b.filter, 'data-filter': '1', 'aria-label': 'Filter tables' });
-  const largeToggle = el('label', { class: 'check', style: 'align-items:center' }, el('input', { type: 'checkbox', checked: !!b.largeOnly }), el('span', { class: 't', text: 'Large tables only' }));
-  const tbody = el('tbody');
-  const info = el('div', { class: 'subtle', style: 'padding: 10px 18px' });
   const schemaMode = b.mode === 'schema';
+  const optOf = (t) => b.opts.get(tkey(t.schema, t.name)) || { data: 'full' };
+  const filter = el('input', { class: 'input sm', placeholder: 'Filter tables', value: b.filter, 'data-filter': '1', 'aria-label': 'Filter tables' });
+  const show = el('select', { class: 'input sm', style: 'width: auto', 'aria-label': 'Which tables to show' },
+    [['all', 'All tables'], ['large', 'Large tables'], ['changed', 'Not full']].map(([v, t]) => el('option', { value: v, selected: b.show === v }, t)));
+  const sort = el('select', { class: 'input sm', style: 'width: auto', 'aria-label': 'Sort tables' },
+    [['size', 'Largest first'], ['name', 'By name']].map(([v, t]) => el('option', { value: v, selected: b.sort === v }, t)));
+  const tbody = el('tbody');
+  const all = el('input', { type: 'checkbox', 'aria-label': 'Select every table on this page' });
+  const bulk = el('div', { class: 'toolbar bulk' });
+  const pager = el('div', { class: 'row wrap', style: 'padding: 10px 18px; gap: 10px' });
+  let matched = [];
+  let shown = [];
+
+  const setMany = (keys, data) => {
+    let skipped = 0;
+    for (const t of c.tables) {
+      const k = tkey(t.schema, t.name);
+      if (!keys.has(k)) continue;
+      const o = optOf(t);
+      const order = o.order_by || t.default_order_column;
+      if (data === 'latest' && !order) { skipped++; continue; }
+      setOpt(b, t.schema, t.name, { data, order_by: order });
+    }
+    if (skipped) toast(`${fmt.plural(skipped, 'table')} kept their option: no primary key or date/time column to order "Latest N" by.`, 'warn');
+    refreshBackup();
+  };
+  const drawBulk = () => {
+    const n = b.sel.size;
+    clear(bulk,
+      el('span', { style: 'font-weight: 600', text: n ? `${fmt.plural(n, 'table')} selected` : 'Tick tables to change several at once' }),
+      matched.length > shown.length && n < matched.length ? el('button', { class: 'btn sm ghost', type: 'button', onclick: () => { for (const t of matched) b.sel.add(tkey(t.schema, t.name)); draw(); } }, `Select all ${fmt.num(matched.length)} matching`) : null,
+      n ? el('button', { class: 'btn sm ghost', type: 'button', onclick: () => { b.sel.clear(); draw(); } }, 'Clear selection') : null,
+      el('div', { class: 'grow' }),
+      el('span', { class: 'subtle', text: 'Set to' }),
+      el('div', { class: 'seg sm' }, [['full', 'Full'], ['latest', 'Latest N'], ['schema', 'Schema only']].map(([v, label]) =>
+        el('button', { type: 'button', disabled: !n || schemaMode, onclick: () => setMany(b.sel, v) }, label))));
+  };
   const draw = () => {
     const q = b.filter.toLowerCase();
-    const all = c.tables.slice().sort((x, y) => (y.large - x.large) || (y.size - x.size) || x.qname.localeCompare(y.qname));
-    const matched = all.filter((t) => (!b.largeOnly || t.large || (b.opts.get(tkey(t.schema, t.name)) || {}).data !== 'full') && (!q || t.qname.toLowerCase().includes(q)));
-    const shown = matched.slice(0, 200);
-    clear(tbody, shown.map((t) => tableRow(b, t, schemaMode)));
-    if (!shown.length) tbody.appendChild(el('tr', null, el('td', { colspan: '4' }, el('div', { class: 'empty', style: 'padding: 20px' }, el('p', { text: b.largeOnly ? 'No large tables. Clear "Large tables only" to see every table.' : 'No table matches the filter.' })))));
-    info.textContent = matched.length > shown.length ? `Showing ${shown.length} of ${fmt.num(matched.length)} tables. Use the filter to find others.` :
-      `${fmt.num(matched.length)} of ${fmt.num(all.length)} tables shown.`;
+    const sorted = c.tables.slice().sort(b.sort === 'name' ? (x, y) => x.qname.localeCompare(y.qname)
+      : (x, y) => (y.large - x.large) || (y.size - x.size) || x.qname.localeCompare(y.qname));
+    matched = sorted.filter((t) => (b.show !== 'large' || t.large) && (b.show !== 'changed' || optOf(t).data !== 'full') && (!q || t.qname.toLowerCase().includes(q)));
+    const pages = Math.max(1, Math.ceil(matched.length / TABLE_PAGE));
+    b.page = Math.min(Math.max(0, b.page), pages - 1);
+    shown = matched.slice(b.page * TABLE_PAGE, (b.page + 1) * TABLE_PAGE);
+    clear(tbody, shown.map((t) => tableRow(b, t, schemaMode, draw)));
+    if (!shown.length) tbody.appendChild(el('tr', null, el('td', { colspan: '5' }, el('div', { class: 'empty', style: 'padding: 20px' },
+      el('p', { text: b.show === 'large' ? 'No large tables. Choose "All tables" to see every table.' : b.show === 'changed' ? 'Every table is backed up in full.' : 'No table matches the filter.' })))));
+    const onPage = shown.filter((t) => b.sel.has(tkey(t.schema, t.name))).length;
+    all.checked = shown.length > 0 && onPage === shown.length;
+    all.indeterminate = onPage > 0 && onPage < shown.length;
+    const from = matched.length ? b.page * TABLE_PAGE + 1 : 0;
+    clear(pager,
+      el('span', { class: 'subtle', text: `${fmt.num(from)}–${fmt.num(b.page * TABLE_PAGE + shown.length)} of ${fmt.num(matched.length)} tables${matched.length < c.tables.length ? ` (${fmt.num(c.tables.length)} in total)` : ''}` }),
+      el('div', { class: 'grow' }),
+      pages > 1 ? el('button', { class: 'btn sm', type: 'button', disabled: b.page === 0, onclick: () => { b.page--; draw(); } }, 'Previous') : null,
+      pages > 1 ? el('span', { class: 'subtle', text: `Page ${b.page + 1} of ${pages}` }) : null,
+      pages > 1 ? el('button', { class: 'btn sm', type: 'button', disabled: b.page >= pages - 1, onclick: () => { b.page++; draw(); } }, 'Next') : null);
+    drawBulk();
   };
-  filter.addEventListener('input', () => { b.filter = filter.value; draw(); });
-  largeToggle.querySelector('input').addEventListener('change', (e) => { b.largeOnly = e.target.checked; draw(); });
+  filter.addEventListener('input', () => { b.filter = filter.value; b.page = 0; draw(); });
+  show.addEventListener('change', () => { b.show = show.value; b.page = 0; draw(); });
+  sort.addEventListener('change', () => { b.sort = sort.value; b.page = 0; draw(); });
+  all.addEventListener('change', () => { for (const t of shown) { const k = tkey(t.schema, t.name); if (all.checked) b.sel.add(k); else b.sel.delete(k); } draw(); });
   draw();
   card.append(
-    el('div', { class: 'toolbar' }, el('div', { class: 'search' }, icon('search'), filter), largeToggle, el('div', { class: 'grow' }),
+    el('div', { class: 'toolbar' }, el('div', { class: 'search' }, icon('search'), filter), show, sort, el('div', { class: 'grow' }),
       schemaMode ? el('span', { class: 'badge', text: 'Schema-only mode: no rows are copied' }) : null),
+    bulk,
     el('div', { class: 'table-wrap', style: 'max-height: 640px; overflow-y: auto' }, el('table', { class: 't' },
-      el('thead', null, el('tr', null, el('th', null, 'Table'), el('th', { class: 'num' }, 'Size'), el('th', { class: 'num' }, 'Est. rows'), el('th', null, 'Data to back up'))),
+      el('thead', null, el('tr', null, el('th', { style: 'width: 34px' }, all), el('th', null, 'Table'), el('th', { class: 'num' }, 'Size'), el('th', { class: 'num' }, 'Est. rows'), el('th', null, 'Data to back up'))),
       tbody)),
-    info);
+    pager);
   return card;
 }
 
-function tableRow(b, t, schemaMode) {
+function tableRow(b, t, schemaMode, redraw) {
   const k = tkey(t.schema, t.name);
   const o = b.opts.get(k) || { data: 'full', order_by: t.default_order_column, limit: 1000 };
   const seg = el('div', { class: 'seg sm' }, [['full', 'Full'], ['latest', 'Latest N'], ['schema', 'Schema only']].map(([v, label]) =>
@@ -1559,7 +1613,10 @@ function tableRow(b, t, schemaMode) {
     if (idx && idx.message) cell.append(el('div', { class: 'advice ' + (idx.usable ? 'good' : 'bad') }, icon(idx.usable ? 'check' : 'alert'), el('span', { text: idx.message })));
   }
   if (t.option_error) cell.append(el('div', { class: 'advice bad', style: 'color: var(--danger)' }, icon('alert'), el('span', { text: t.option_error })));
+  const pick = el('input', { type: 'checkbox', checked: b.sel.has(k), 'aria-label': `Select ${t.qname}`,
+    onchange: (e) => { if (e.target.checked) b.sel.add(k); else b.sel.delete(k); redraw(); } });
   return el('tr', { class: t.large ? 'large' : '' },
+    el('td', null, pick),
     el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'n', text: t.qname, title: t.qname }),
       t.large ? el('span', { class: 'badge warn', title: 'Over the large-table threshold (' + t.large_reason.join(' and ') + ')' }, 'large') : null,
       t.kind === 'partitioned' ? el('span', { class: 'badge info', text: `${t.partitions} partitions` }) : null)),
@@ -1568,7 +1625,36 @@ function tableRow(b, t, schemaMode) {
     cell);
 }
 
+function functionsCard(b) {
+  return el('div', { class: 'card' },
+    el('div', { class: 'card-h' }, el('h2', { text: 'Functions only' })),
+    el('div', { class: 'card-b stack' },
+      el('div', { class: 'alert info' }, icon('info'), el('div', { class: 'body' },
+        el('b', { text: 'One .sql file per function or procedure' }),
+        'Every function and procedure in the selected schemas is written to its own file in a new folder, named after the function (calc_total.sql). ',
+        'When two have the same name (overloads, or the same name in two schemas), the first keeps the plain name and the others get a number: calc_total1.sql, calc_total2.sql.')),
+      el('div', { class: 'subtle', text: 'Each file uses CREATE OR REPLACE, so it can be run on its own (Restore → "File on this PC"). Tables and data are not included, and no table locks are taken.' })));
+}
+
+function functionsSummary(b) {
+  const start = el('button', { class: 'btn primary lg', type: 'button', style: 'width: 100%', disabled: b.starting || !b.schemas.size }, icon('play'), 'Start backup');
+  start.onclick = () => startBackup(start);
+  const folder = b.filename || `${b.db}_functions_YYYYMMDD_HHMMSS`;
+  return el('div', { class: 'card' },
+    el('div', { class: 'card-h' }, el('h2', { text: 'Summary' })),
+    el('div', { class: 'card-b stack' },
+      el('div', { class: 'summary-list' },
+        el('div', { class: 'r' }, el('span', { text: 'Mode' }), el('span', { text: 'Functions only' })),
+        el('div', { class: 'r' }, el('span', { text: 'Schemas' }), el('span', { text: b.schemas.size === b.schemasAll.length ? `All (${b.schemasAll.length})` : `${b.schemas.size} of ${b.schemasAll.length}` })),
+        el('div', { class: 'r' }, el('span', { text: 'Owners and grants' }), el('span', { text: b.privileges ? 'Included' : 'Left out' })),
+        el('div', { class: 'r' }, el('span', { text: 'Folder' }), el('span', { class: 'mono', text: folder, title: folder }))),
+      el('div', { class: 'subtle', text: 'Files: <function name>.sql, then <name>1.sql, <name>2.sql when a name repeats.' })),
+    el('div', { class: 'card-f', style: 'flex-direction: column; align-items: stretch' }, start,
+      el('div', { class: 'subtle', style: 'text-align:center', text: b.schemas.size ? 'Read-only; no table locks' : 'Select at least one schema' })));
+}
+
 function summaryCard(b) {
+  if (b.mode === 'functions') return functionsSummary(b);
   const c = b.check;
   const partial = [];
   for (const [k, o] of b.opts) if (o.data !== 'full') partial.push([k.replace('\u0000', '.'), o]);
@@ -1604,13 +1690,14 @@ async function startBackup(btn) {
   const b = state.backup;
   if (b.starting) return;
   b.starting = true;
-  busy(btn, true, 'Checking…');
+  const fnMode = b.mode === 'functions';
+  busy(btn, true, fnMode ? 'Starting…' : 'Checking…');
   try {
     if (checkIsStale(b)) await runCheck();
     const c = b.check;
-    if (!c) { toast(b.checkError || 'The pre-backup check failed.', 'err'); return; }
-    const bad = c.tables.filter((t) => t.option_error);
-    if (c.problems.length || bad.length) {
+    if (!c && !fnMode) { toast(b.checkError || 'The pre-backup check failed.', 'err'); return; }
+    const bad = fnMode ? [] : c.tables.filter((t) => t.option_error);
+    if (!fnMode && (c.problems.length || bad.length)) {
       toast(`Fix ${fmt.plural(c.problems.length + bad.length, 'problem')} in the pre-backup check first.`, 'err', 'Backup not started');
       return;
     }
@@ -1619,7 +1706,7 @@ async function startBackup(btn) {
     const options = { mode: req.mode, schemas: req.schemas, tables: req.tables, privileges: b.privileges, gzip: b.gzip, out_dir: b.out_dir,
       filename: b.filename || null, lock_timeout_s: num(b.lock_timeout_s), speed_limit_mb_s: num(b.speed_limit_mb_s) };
     const res = await api('POST', '/api/backup', { server_id: b.sid, database: b.db, options });
-    toast(`Backup of ${b.db} started.`, 'ok');
+    toast(fnMode ? `Backup of the functions of ${b.db} started.` : `Backup of ${b.db} started.`, 'ok');
     state.openJob = res.job_id;
     await pollJobs();
     go(`#/activity/${enc(res.job_id)}`);
@@ -1649,7 +1736,7 @@ async function viewRestore(view, token) {
   if (!state.restore || state.restore.sid !== sid || pre.history_id || pre.target) {
     const r = { sid, source: 'history', history_id: null, file: '', mode: 'create', existing: '', newName: '', owner: '', confirm: '',
       allow_non_empty: false, on_error: 'continue', single_transaction: false, contents: null };
-    const backups = hist.filter((h) => h.kind === 'backup' && h.status === 'success');
+    const backups = hist.filter((h) => h.kind === 'backup' && h.status === 'success' && h.mode !== 'functions');
     if (pre.history_id) {
       const h = backups.find((x) => x.id === pre.history_id);
       if (h) { r.history_id = h.id; r.newName = uniqueName(h.database + '_restored', dbs); }
@@ -1686,7 +1773,7 @@ function drawRestore(view) {
   const r = state.restore;
   const s = server(r.sid);
   const dbs = state.dbs[r.sid] || [];
-  const backups = (state.history || []).filter((h) => h.kind === 'backup' && h.status === 'success');
+  const backups = (state.history || []).filter((h) => h.kind === 'backup' && h.status === 'success' && h.mode !== 'functions');
   const chosen = backups.find((h) => h.id === r.history_id);
   const scrollY = $('content').scrollTop;
 
@@ -1700,7 +1787,7 @@ function drawRestore(view) {
         el('tbody', null, backups.map((h) => el('tr', { style: 'cursor:pointer', onclick: () => { r.history_id = h.id; if (!r.newName) r.newName = uniqueName(h.database + '_restored', dbs); refreshRestore(); } },
           el('td', null, el('input', { type: 'radio', name: 'hsrc', checked: h.id === r.history_id, 'aria-label': 'Select backup' })),
           el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'n', text: h.database }), h.partial ? el('span', { class: 'badge warn', text: 'Partial' }) : null,
-            h.mode && h.mode !== 'full' ? el('span', { class: 'badge', text: h.mode === 'schema' ? 'schema only' : 'data only' }) : null)),
+            h.mode && h.mode !== 'full' ? el('span', { class: 'badge', text: MODE_LABEL[h.mode] || h.mode }) : null)),
           el('td', { class: 'subtle', text: (h.server && h.server.name) || '' }),
           el('td', { class: 'nowrap', title: h.started }, fmt.date(h.started)),
           el('td', { class: 'num' }, fmt.bytes(h.size)),
@@ -1852,7 +1939,8 @@ function announce(j) {
   const what = j.kind === 'backup' ? 'Backup' : 'Restore';
   const res = j.result || {};
   if (j.status === 'success') {
-    const msg = j.kind === 'backup' ? `${fmt.basename(res.file)} · ${fmt.bytes(res.size)}${res.partial ? ' · partial' : ''}`
+    const msg = j.kind === 'backup' && res.mode === 'functions' ? `${fmt.plural(res.objects, 'function file')} in ${fmt.basename(res.file)}`
+      : j.kind === 'backup' ? `${fmt.basename(res.file)} · ${fmt.bytes(res.size)}${res.partial ? ' · partial' : ''}`
       : `${fmt.num(res.objects)} objects, ${fmt.num(res.rows)} rows${j.error_count ? `, ${fmt.plural(j.error_count, 'error')}` : ''}`;
     toast(msg, j.error_count ? 'warn' : 'ok', `${what} of ${j.database} finished`);
   } else if (j.status === 'cancelled') toast(`${what} of ${j.database} was cancelled.`, 'warn');
@@ -1979,7 +2067,11 @@ function jobCard(j) {
 
 function jobBody(j, d) {
   const p = j.progress || {};
-  const items = j.kind === 'backup' ? [
+  const items = j.kind === 'backup' && j.mode === 'functions' ? [
+    ['Functions', `${fmt.num(p.objects_done)} / ${fmt.num(p.objects_total)}`],
+    ['Written', fmt.bytes(p.bytes_written)],
+    ['Elapsed', fmt.dur(j.elapsed_s)],
+  ] : j.kind === 'backup' ? [
     ['Objects', `${fmt.num(p.objects_done)} / ${fmt.num(p.objects_total)}`],
     ['Tables', `${fmt.num(p.tables_done)} / ${fmt.num(p.tables_total)}`],
     ['Rows copied', `${fmt.num(p.rows)} / ≈${fmt.num(p.est_rows)}`],
@@ -2011,7 +2103,15 @@ function jobBody(j, d) {
 function resultBlock(j, res) {
   const wrap = el('div', { class: 'stack' });
   if (j.status === 'failed' && j.error) wrap.appendChild(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'The job failed' }), j.error)));
-  if (j.kind === 'backup') {
+  if (j.kind === 'backup' && res.mode === 'functions') {
+    const files = res.functions || [];
+    if (j.status === 'success') wrap.appendChild(el('div', { class: 'alert ok' }, icon('check'), el('div', { class: 'body' },
+      el('b', { text: `${fmt.plural(files.length, 'function file')} written` }),
+      res.renamed ? `${fmt.plural(res.renamed, 'file')} got a number because the function name repeats.` : 'Every file is named after its function.')));
+    if (files.length) wrap.appendChild(el('div', null, el('div', { class: 'section-title', text: `Files${files.length > 50 ? ' (first 50)' : ''}` }),
+      el('div', { class: 'errlist' }, files.slice(0, 50).map((f) => el('div', { class: 'erritem file' },
+        el('div', { class: 'o mono', text: f.file }), el('div', { class: 'mono subtle', text: f.name }))))));
+  } else if (j.kind === 'backup') {
     if (res.partial && res.partial_tables && res.partial_tables.length) {
       wrap.appendChild(el('div', { class: 'alert warn' }, icon('info'), el('div', { class: 'body' }, el('b', { text: 'Partial backup' }),
         res.partial_tables.map((t) => el('div', { class: 'mono', text: `${t.table}: ${t.data === 'latest' ? `latest ${fmt.num(t.limit)} by ${t.order_by}` : 'schema only'}` })))));
@@ -2101,7 +2201,7 @@ function drawHistory(view) {
 
 function historyRow(h) {
   const isBackup = h.kind === 'backup';
-  const canRestore = isBackup && h.status === 'success';
+  const canRestore = isBackup && h.status === 'success' && h.mode !== 'functions';
   const more = el('button', { class: 'btn sm icon-only ghost', type: 'button', 'aria-label': 'More actions', title: 'More actions' }, icon('more'));
   more.onclick = () => menu(more, [
     { icon: 'folder', label: 'Open folder', disabled: !h.file, action: () => openFolder(h) },
@@ -2110,15 +2210,20 @@ function historyRow(h) {
     { icon: 'trash', label: 'Delete entry…', danger: true, disabled: h.status === 'running', action: () => deleteHistory(h) },
   ]);
   const counts = [];
-  if (h.objects !== null && h.objects !== undefined) counts.push(`${fmt.num(h.objects)} objects`);
-  if (isBackup && h.tables !== null && h.tables !== undefined) counts.push(`${fmt.num(h.tables)} tables`);
-  if (h.rows !== null && h.rows !== undefined) counts.push(`${fmt.num(h.rows)} rows`);
+  const has = (v) => v !== null && v !== undefined;
+  if (isBackup && h.mode === 'functions') {
+    if (has(h.objects)) counts.push(fmt.plural(h.objects, 'function file'));
+  } else {
+    if (has(h.objects)) counts.push(`${fmt.num(h.objects)} objects`);
+    if (isBackup && has(h.tables)) counts.push(`${fmt.num(h.tables)} tables`);
+    if (has(h.rows)) counts.push(`${fmt.num(h.rows)} rows`);
+  }
   return el('tr', null,
     el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'job-ic ' + h.kind, style: 'width: 28px; height: 28px; border-radius: 7px' }, icon(isBackup ? 'backup' : 'restore')),
       el('div', { style: 'min-width: 0' }, el('div', { class: 'row', style: 'gap: 6px' }, el('span', { class: 'n', text: h.database }),
         h.partial ? el('span', { class: 'badge warn', title: (h.partial_tables || []).map((t) => t.table).join(', '), text: 'Partial' }) : null,
         h.gzip ? el('span', { class: 'badge', text: 'gzip' }) : null),
-        el('div', { class: 'subtle', style: 'font-weight: 400', text: isBackup ? `Backup${h.mode && h.mode !== 'full' ? ` · ${h.mode === 'schema' ? 'schema only' : 'data only'}` : ''}` : `Restore${h.target_mode ? ` · ${{ create: 'new database', existing: 'existing database', recreate: 'recreated' }[h.target_mode] || h.target_mode}` : ''}` })))),
+        el('div', { class: 'subtle', style: 'font-weight: 400', text: isBackup ? `Backup${h.mode && h.mode !== 'full' ? ` · ${MODE_LABEL[h.mode] || h.mode}` : ''}` : `Restore${h.target_mode ? ` · ${{ create: 'new database', existing: 'existing database', recreate: 'recreated' }[h.target_mode] || h.target_mode}` : ''}` })))),
     el('td', { class: 'nowrap', title: h.started }, el('div', { text: fmt.date(h.started) }), el('div', { class: 'subtle', text: fmt.ago(h.started) })),
     el('td', { text: (h.server && h.server.name) || '' }),
     el('td', { class: 'mono', style: 'max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap', title: h.file || '', text: fmt.basename(h.file) || '—' }),
@@ -2150,7 +2255,7 @@ async function deleteHistory(h) {
   const cb = el('input', { type: 'checkbox' });
   const yes = await confirmBox({ title: 'Delete this history entry?', confirmLabel: 'Delete', danger: true,
     message: `${h.kind === 'backup' ? 'Backup' : 'Restore'} of ${h.database} from ${fmt.date(h.started)}.`,
-    extra: h.kind === 'backup' && h.file ? el('label', { class: 'check' }, cb, el('span', null, el('span', { class: 't', text: 'Also delete the backup file' }),
+    extra: h.kind === 'backup' && h.file ? el('label', { class: 'check' }, cb, el('span', null, el('span', { class: 't', text: h.mode === 'functions' ? 'Also delete the function files and their folder' : 'Also delete the backup file' }),
       el('span', { class: 'd mono', text: h.file }))) : null });
   if (!yes) return;
   try {

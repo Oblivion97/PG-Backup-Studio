@@ -72,7 +72,13 @@ def _auth_failure(e: Exception) -> bool:
 def open_in_file_manager(path: str) -> str:
     """Show `path` in the system file manager (selected when it exists); returns what was opened."""
     folder = os.path.dirname(path)
-    if os.path.isfile(path):
+    if os.path.isdir(path):   # a functions backup: open the folder itself
+        target = path
+        if os.name == "nt":
+            os.startfile(path)  # noqa: S606 - a folder recorded in history
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
+    elif os.path.isfile(path):
         target = path
         if os.name == "nt":
             subprocess.Popen(["explorer", f"/select,{path}"])
@@ -356,8 +362,8 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
         if tables is not None and not isinstance(tables, list):
             raise ApiError("'tables' must be a list.")
         mode = data.get("mode") or "full"
-        if mode not in ("full", "schema", "data"):
-            raise ApiError("'mode' must be full, schema or data.")
+        if mode not in ("full", "schema", "data", "functions"):
+            raise ApiError("'mode' must be full, schema, data or functions.")
         database_connection(server, name).close()
         return run_precheck(server, name, schemas=schemas, mode=mode, tables=tables,
                             thresholds=store.get_settings())
@@ -391,6 +397,9 @@ def create_app(store: Store | None = None, manager: JobManager | None = None) ->
             entry = store.get_history(history_id)
             if entry is None or entry.get("kind") != "backup" or entry.get("status") != "success":
                 raise ApiError("That history entry is not a finished backup.", "not_found")
+            if entry.get("mode") == "functions":
+                raise ApiError("A functions backup is a folder of separate files; restore one file at a time "
+                               "with \"Backup file on this PC\".")
             path = entry.get("file")
         else:
             path = field(data, "file")

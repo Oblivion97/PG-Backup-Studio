@@ -1,6 +1,6 @@
 # PG Backup Studio — Project Status
 
-_Last updated: 2026-10-27_
+_Last updated: 2026-10-28_
 
 Spec: `.claude/commands/pg-backup-studio.md` · Design: `docs/ARCHITECTURE.md` · Decisions:
 `docs/decisions/` · Tests: `docs/QA_REPORT.md`
@@ -10,6 +10,16 @@ Spec: `.claude/commands/pg-backup-studio.md` · Design: `docs/ARCHITECTURE.md` �
 `tests/test_step6_ui.py` (11 static checks, passing). Next: the user runs `python app.py`, opens
 http://127.0.0.1:8000 and goes through ARCHITECTURE §13.7 items 4–12 (the Chrome extension was not connected,
 so Claude could not click through it). Then mark Step 6 done and start Step 7.
+
+**Added 2026-10-28 (user request, built directly):**
+- Backup panel lists **every table** (no "large tables only" default): 100 per page, filter, show All / Large /
+  Not full, sort by size or name, tick tables (or "select all matching") and set Full / Latest N / Schema only
+  for all of them at once.
+- **Functions only** backup mode: one `.sql` file per function or procedure in a new folder
+  `<db>_functions_YYYYMMDD_HHMMSS`; a repeated name (overloads, same name in two schemas, compared
+  case-insensitively) keeps the plain name first, then `name1.sql`, `name2.sql`. Code: `engine/functions.py`.
+  History can open and delete the folder; it is not offered as a restore source (each file can be restored
+  on its own with "File on this PC"). Tests: `tests/test_functions_backup.py` (4 need PostgreSQL).
 
 How to start a new session (PowerShell, in this folder):
 ```
@@ -181,6 +191,8 @@ closes.
 - Restoring into a non-empty database is refused unless allowed (then "already exists" errors are expected).
 - Run only one app instance per `data/` folder (two processes could overwrite each other's change).
 - Backup files must be UTF-8. A BOM is tolerated, and CRLF-converted files still restore.
+- Functions-only backups contain functions and procedures, not aggregates. Each file is restored on its own;
+  types or tables a function uses must already exist in the target.
 - Database names containing `/` are listed and can be backed up / restored, but drop / rename / kill /
   profile need a name without `/`.
 

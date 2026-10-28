@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 LATE = 13
 WRITE_BATCH_BYTES = 256 * 1024
 PROGRESS_INTERVAL = 0.25
-MODES = ("full", "schema", "data")
+MODES = ("full", "schema", "data", "functions")
 MAX_LOCK_TIMEOUT_S = 3600
 MIN_SPEED_LIMIT_MB_S = 0.1
 _FK_ALREADY_RELAXED = re.compile(r"\sNOT (?:VALID|ENFORCED)$")
@@ -135,7 +135,7 @@ class BackupOptions:
         """Refuse an unknown mode, an empty schema selection (None means every schema), out-of-range
         safety options and invalid or repeated table options."""
         if self.mode not in MODES:
-            raise BackupError(f"Unknown backup mode {self.mode!r}; use full, schema or data.")
+            raise BackupError(f"Unknown backup mode {self.mode!r}; use full, schema, data or functions.")
         if self.schemas is not None and not self.schemas:
             raise BackupError("No schemas selected; choose at least one schema to back up.")
         if not _number_between(self.lock_timeout_s, 0, MAX_LOCK_TIMEOUT_S):
@@ -1278,10 +1278,15 @@ def run_backup(server: dict, dbname: str, options: BackupOptions | dict | None =
                progress: Callable[[str, dict], None] | None = None,
                cancel: threading.Event | None = None) -> dict:
     """Back up one database into a single file; returns the result dict (ARCHITECTURE 8.1, 9.6).
+    Mode `functions` writes one file per function into a folder instead (`engine/functions.py`).
 
     Raises `Cancelled` when `cancel` is set (also during a lock wait), `BackupBlockedError` when
     the login cannot read everything, `LockTimeoutError` when a table stays locked, and
     `BackupError`/`EngineError` with a clear message on other failures; the `.part` file is
     removed in every case.
     """
-    return _BackupRun(server, dbname, BackupOptions.from_value(options), progress, cancel).run()
+    opts = BackupOptions.from_value(options)
+    if opts.mode == "functions":
+        from .functions import run_function_export   # imports this module
+        return run_function_export(server, dbname, opts, progress, cancel)
+    return _BackupRun(server, dbname, opts, progress, cancel).run()
