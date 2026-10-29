@@ -1127,3 +1127,41 @@ CSV; value viewer on a jsonb cell; manual mode: submit then Rollback; table view
   errors with line and position, timeout, API); formatter and plan maths checked with Node.
 - **Click-through:** Ctrl+E on a SELECT; Ctrl+Shift+E on a DELETE → the plan shows actual rows and the rows are still
   there; a join with a bad estimate shows the warning; click a node; Format a long one-line query, then Ctrl+Z.
+
+## 15. Step 9 design — desktop app and installer (2026-10-29, approved)
+
+Decision record: `decisions/010-desktop-app.md`.
+
+### 15.1 Pieces
+| Piece | File | Role |
+|---|---|---|
+| Launcher | `desktop.py` | single instance (mutex), Store, `create_app(desktop=Bridge, launch_token=...)`, werkzeug server on 127.0.0.1:0 in a thread, pywebview window, close question, shutdown; log in `<data>/logs/desktop.log` |
+| App hooks | `app.py` | `/launch/<token>` sets the cookie; guard checks it; `/api/app` returns `desktop`, `data_dir`; `POST /api/pick-folder`, `/api/data-folder/open`, `/api/data-folder/import`; settings check the backup folder is writable |
+| Data folder | `store.py` | `default_data_dir()`: `%APPDATA%\PG Backup Studio` when frozen, `./data` from source; `Store.import_from(folder)` |
+| Build | `pg_backup_studio.spec`, `installer/make_icon.py`, `installer/make_version.py`, `build_desktop.bat` | PyInstaller one-folder build `dist/PG Backup Studio/` |
+| Installer | `installer/pg_backup_studio.iss` | Inno Setup 6 → `dist/installer/PG Backup Studio Setup <version>.exe` |
+
+### 15.2 Runtime
+1. Mutex `Local\PGBackupStudio.SingleInstance`; a second launch shows "already open" and exits.
+2. `Store()` → data folder; logging to file (the window has no console).
+3. Token `secrets.token_urlsafe(32)`; server on a free port; window opens `http://127.0.0.1:<port>/launch/<token>`.
+4. WebView2 runs with `private_mode=False` and storage in `<data>/webview`, so the page's localStorage (theme, query
+   tabs, history) survives restarts; `text_select=True` (editor, grid).
+5. Closing: `close_question(manager, consoles)` (running jobs, open transactions) → native confirmation → then
+   `manager.shutdown()`, `consoles.close_all()`, `server.shutdown()`.
+
+### 15.3 Build and install
+`build_desktop.bat [--no-tests]`: quick tests (step 9, 6, 5) → icon + version info → PyInstaller → ISCC with
+`/DAppVersion=<app.APP_VERSION>`. Size ≈ 42 MB installed, 17 MB installer. Installer: per-user by default
+(`PrivilegesRequired=lowest`, override dialog), AppId `517E3A83-B21F-4FE1-B0C7-4C99A438F80D` (never change),
+`AppMutex` = the launcher's mutex, old `_internal` removed before copying, WebView2 check after install, uninstall
+asks whether to delete `%APPDATA%\PG Backup Studio`.
+
+### 15.4 Tests and click-through
+Automated: `tests/test_step9_desktop.py` (data folder by mode, import valid / invalid / all-or-nothing, launch token
+and cookie, browser mode without picker, picker via a fake window, backup folder writable check, import API, close
+question, build files agree: mutex, AppId, spec, icon, requirements). Smoke test of the built exe: starts, serves the
+page on a random port, API refuses calls without the cookie, second instance refused.
+Click-through: run the Setup, start from the Start menu, add a server, back up with Browse…, Settings → Browse… and
+save, Settings → App data → Import… from the source `data` folder, close during a backup (asked), reinstall over it
+(data kept), uninstall (asked about data).

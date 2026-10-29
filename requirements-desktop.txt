@@ -1,0 +1,4 @@
+-r requirements.txt
+# desktop app window and packaging (Step 9); the installed app needs none of this on the user's PC
+pywebview>=6.2
+pyinstaller>=6.22

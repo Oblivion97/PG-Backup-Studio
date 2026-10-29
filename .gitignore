@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+# desktop build output (Step 9)
+build/
+dist/
+installer/version_info.txt

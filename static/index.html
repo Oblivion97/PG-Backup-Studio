@@ -1008,14 +1008,15 @@ async function settingsModal() {
   const save = el('button', { class: 'btn primary', type: 'button' }, 'Save settings');
   const cancel = el('button', { class: 'btn', type: 'button' }, 'Close');
   const n = (x) => (/^\s*\d+(\.\d+)?\s*$/.test(x.value) ? Number(x.value) : x.value);
-  const m = modal({ title: 'Settings', iconName: 'settings', sub: 'Saved in data/settings.json',
+  const m = modal({ title: 'Settings', iconName: 'settings', sub: `Saved in ${state.dataDir || 'data'}`,
     body: [
-      el('div', { class: 'field' }, el('label', null, 'Default backup folder'), f.out, el('div', { class: 'hint', text: 'The last folder a backup succeeded in becomes the default.' })),
+      el('div', { class: 'field' }, el('label', null, 'Default backup folder'), folderField(f.out), el('div', { class: 'hint', text: 'Checked to be writable when saved. The last folder a backup succeeded in becomes the default.' })),
       el('div', { class: 'form-grid' },
         el('div', { class: 'field' }, el('label', null, 'Large table: size (MB)'), f.mb),
         el('div', { class: 'field' }, el('label', null, 'Large table: estimated rows'), f.rows),
         el('div', { class: 'field' }, el('label', null, 'History entries kept'), f.hist, el('div', { class: 'hint', text: 'Between 50 and 100,000. Files are never deleted by trimming.' })),
         el('div', { class: 'field' }, el('label', null, 'Appearance'), themeSeg)),
+      dataField(() => m.close()),
     ],
     actions: [cancel, save] });
   cancel.onclick = () => m.close();
@@ -1028,6 +1029,39 @@ async function settingsModal() {
       toast('Settings saved.', 'ok');
     } catch (e) { busy(save, false); m.error(e.message); }
   };
+}
+/** `input` with a Browse button (native folder picker) in the desktop app; the input alone in a browser. */
+function folderField(input) {
+  if (!state.desktop) return input;
+  input.style.flex = '1';
+  const b = el('button', { class: 'btn', type: 'button' }, icon('folder'), 'Browse…');
+  b.onclick = async () => {
+    try {
+      const r = await api('POST', '/api/pick-folder', { start: input.value });
+      if (r.path) { input.value = r.path; input.dispatchEvent(new Event('change')); }
+    } catch (e) { toastError(e); }
+  };
+  return el('div', { class: 'row' }, input, b);
+}
+function dataField(closeSettings) {
+  const open = el('button', { class: 'btn sm', type: 'button', onclick: () => api('POST', '/api/data-folder/open').catch(toastError) }, icon('folder'), 'Open');
+  const imp = el('button', { class: 'btn sm', type: 'button', title: 'Copy servers, history and settings from another data folder' }, icon('restore'), 'Import…');
+  imp.onclick = async () => {
+    try {
+      const r = await api('POST', '/api/pick-folder', { start: '' });
+      if (!r.path || !(await confirmBox({ title: 'Import app data?', danger: true, confirmLabel: 'Import',
+        message: `Servers, history and settings found in ${r.path} replace the ones in ${state.dataDir}.` }))) return;
+      const res = await api('POST', '/api/data-folder/import', { folder: r.path });
+      toast(`Imported ${res.copied.join(', ')}.`, 'ok');
+      closeSettings();
+      await loadServers();
+      renderSideLinks();
+      route();
+    } catch (e) { toastError(e, 'Not imported'); }
+  };
+  return el('div', { class: 'field' }, el('label', null, 'App data'),
+    el('div', { class: 'row' }, el('span', { class: 'mono subtle grow', text: state.dataDir }), open, state.desktop ? imp : null),
+    el('div', { class: 'hint', text: 'Saved servers, history and settings.' + (state.desktop ? ' Import copies them from another data folder, e.g. the data folder of a copy run from source.' : '') }));
 }
 function applyTheme(t) {
   store('theme', t);
@@ -1430,7 +1464,7 @@ function drawBackup(view) {
   left.appendChild(el('div', { class: 'card' },
     el('div', { class: 'card-h' }, el('h2', { text: 'Output' })),
     el('div', { class: 'card-b stack' },
-      el('div', { class: 'field' }, el('label', null, 'Folder on this PC'), out),
+      el('div', { class: 'field' }, el('label', null, 'Folder on this PC'), folderField(out)),
       el('details', { class: 'adv' }, el('summary', null, icon('chevron'), fnMode ? 'Advanced: folder name' : 'Advanced: file name, lock timeout, speed limit'),
         el('div', { class: 'form-grid' },
           el('div', { class: 'field span-2' }, el('label', null, fnMode ? 'Folder name' : 'File name'), fname, el('div', { class: 'hint', text: fnMode ? 'Leave empty for the automatic name. The function files go into this new folder; an existing folder is never used.' : 'Leave empty for the automatic name. An existing file is never overwritten.' })),
@@ -2282,6 +2316,8 @@ async function start() {
   try {
     const info = await api('GET', '/api/app');
     state.version = info.version;
+    state.desktop = !!info.desktop;
+    state.dataDir = info.data_dir || '';
     for (const w of info.warnings || []) toast(w, 'warn', 'Data file problem');
     await loadServers();
   } catch (e) { toastError(e); }
