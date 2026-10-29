@@ -38,6 +38,8 @@ Backup files are never deleted.
 - Restore a backup into an existing or a new database, from history or from any `.sql` file on the PC.
 
 **Database management**
+- Add a server by pasting a connection link (`postgresql://user:password@host:5432/db?sslmode=require`, a JDBC
+  URL, or `host=… port=… dbname=…`); host, port, user, password, database and SSL mode are filled in.
 - Create, rename, clone and drop databases; see and end connections. System databases are protected.
 
 **SQL workspace**

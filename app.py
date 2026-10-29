@@ -32,7 +32,7 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.9.0"
+APP_VERSION = "0.9.1"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}

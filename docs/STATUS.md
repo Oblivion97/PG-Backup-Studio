@@ -33,7 +33,12 @@ app, random port + per-launch secret cookie, data in %APPDATA%\PG Backup Studio 
 Import… brings the old data over), Browse… for the backup folder, one instance, close asks when work is running.
 `build_desktop.bat` → `dist\installer\PG Backup Studio Setup 0.9.0.exe` (Inno Setup, per-user, no admin). Design:
 ARCHITECTURE §15, decision 010. Tests: `tests/test_step9_desktop.py`. Next: the user installs it and does the
-§15.4 click-through.
+§15.4 click-through. Released as v0.9.0 on GitHub (2026-10-29).
+
+**Added 2026-10-29 (user request):** Add / Edit server has a "Connection link" field; pasting
+`postgresql://user:pw@host:port/db?sslmode=…`, a JDBC URL or `host=… dbname=…` fills host, port, user, password,
+SSL mode and maintenance database (`parseConnLink` in `static/index.html`; the link itself is not saved). Released as v0.9.1.
+`static/index.html` is now 152,806 of its 153,600-byte limit.
 
 How to start a new session (PowerShell, in this folder):
 ```
