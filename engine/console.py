@@ -187,6 +187,12 @@ class ConsoleManager:
         with self._lock:
             return len(self._sessions)
 
+    def open_transactions(self) -> int:
+        """Sessions with a transaction that would be rolled back by closing them (asked about on app exit)."""
+        with self._lock:
+            sessions = list(self._sessions.values())
+        return sum(1 for s in sessions if s.tx_status() in ("in_transaction", "failed"))
+
     # -------------------------------------------------- transactions
 
     def _locked(self, session_id: str) -> Session:

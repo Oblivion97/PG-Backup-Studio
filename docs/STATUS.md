@@ -28,6 +28,13 @@ Design: ARCHITECTURE §14 (§14.6 8b, §14.7 8c, §14.8 8d), decision 009. Tests
 PostgreSQL). Next: the user runs the full suite and the §14.8 click-through; then Step 8 is done. Still open from
 before: Step 6 click-through, Step 7 (end-to-end tests, README, push to git when the user asks).
 
+**Step 9 — desktop app BUILT (2026-10-29), click-through pending.** Native window (pywebview) around the same
+app, random port + per-launch secret cookie, data in %APPDATA%\PG Backup Studio when installed (Settings → App data →
+Import… brings the old data over), Browse… for the backup folder, one instance, close asks when work is running.
+`build_desktop.bat` → `dist\installer\PG Backup Studio Setup 0.9.0.exe` (Inno Setup, per-user, no admin). Design:
+ARCHITECTURE §15, decision 010. Tests: `tests/test_step9_desktop.py`. Next: the user installs it and does the
+§15.4 click-through.
+
 How to start a new session (PowerShell, in this folder):
 ```
 $env:PGPASSWORD = '<postgres password>'
@@ -72,6 +79,7 @@ closes.
 | 5 | JSON API | ✅ Done — full suite 471 passed + flaky Step 4 test replaced, re-run 18/18 (2026-10-27) |
 | 6 | UI | 🔨 Built (approved 2026-10-27); static checks 11/11; click-through pending |
 | 7 | End-to-end + docs (README) | ⏳ Not started — then push to git |
+| 9 | Desktop app + installer | 🔨 built 2026-10-29; click-through pending |
 | 8 | SQL workspace (8a–8d) | 🔨 8a–8c done, 8d built (2026-10-28); click-through pending |
 
 ## What works now (engine, storage, jobs, database management, JSON API; no UI yet)

@@ -9,15 +9,17 @@ stored are asked for once and kept in memory only (`Passwords`).
 from __future__ import annotations
 
 import atexit
+import hmac
 import logging
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, redirect, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 import jobs
@@ -30,11 +32,12 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 GUARD_HEADER = "X-PGBS"
+TOKEN_COOKIE = "pgbs_launch"
 STATUS = {"invalid": 400, "failed": 400, "password_required": 401, "protected": 403, "permission": 403,
           "forbidden": 403, "not_found": 404, "exists": 409, "in_use": 409, "conflict": 409, "busy": 409,
           "readonly": 409, "limit": 409, "session_lost": 410}
@@ -100,16 +103,35 @@ def open_in_file_manager(path: str) -> str:
     return target
 
 
+def check_output_folder(path: str) -> str:
+    """Make sure backups can be written to `path` (created when missing); returns the full path."""
+    folder = os.path.abspath(os.path.expanduser(path.strip()))
+    try:
+        os.makedirs(folder, exist_ok=True)
+        fd, probe = tempfile.mkstemp(prefix=".pgbs-write-test-", dir=folder)
+        os.close(fd)
+        os.remove(probe)
+    except OSError as e:
+        raise ApiError(f"Backups cannot be written to {folder}: {e.strerror or e}.") from e
+    return folder
+
+
 def create_app(store: Store | None = None, manager: JobManager | None = None,
-               consoles: ConsoleManager | None = None) -> Flask:
-    """Build the Flask application and register its routes."""
+               consoles: ConsoleManager | None = None, desktop=None, launch_token: str | None = None) -> Flask:
+    """Build the Flask application and register its routes.
+
+    `desktop`: the desktop window bridge (desktop.py) with `pick_folder(start) -> str | None`; None in browser
+    mode. `launch_token`: per-launch secret of the desktop app; the window opens `/launch/<token>`, which sets
+    it as a cookie, and every API call must carry that cookie (decision 010 §2).
+    """
     app = Flask(__name__, static_folder=None)
     app.json.sort_keys = False
     store = store or Store()
     manager = manager or jobs.init(store)
     consoles = consoles or ConsoleManager()
     passwords = Passwords()
-    app.config.update(PGBS_STORE=store, PGBS_MANAGER=manager, PGBS_PASSWORDS=passwords, PGBS_CONSOLES=consoles)
+    app.config.update(PGBS_STORE=store, PGBS_MANAGER=manager, PGBS_PASSWORDS=passwords, PGBS_CONSOLES=consoles,
+                      PGBS_DESKTOP=desktop)
 
     # ------------------------------------------------------------ helpers
 
@@ -172,6 +194,8 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
             raise ApiError("Requests must be addressed to 127.0.0.1 or localhost.", "forbidden")
         if request.headers.get(GUARD_HEADER) != "1":
             raise ApiError("This API only answers PG Backup Studio's own page.", "forbidden")
+        if launch_token and not hmac.compare_digest(request.cookies.get(TOKEN_COOKIE, ""), launch_token):
+            raise ApiError("This API only answers the PG Backup Studio window it was started for.", "forbidden")
         if request.data and request.mimetype != "application/json":
             raise ApiError("Send the request body as JSON (Content-Type: application/json).")
         return None
@@ -221,9 +245,41 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
             return error("Not found.", "not_found")
         return send_from_directory(STATIC_DIR, name, mimetype="text/javascript")
 
+    @app.get("/launch/<token>")
+    def launch(token):
+        if not launch_token or not hmac.compare_digest(token, launch_token):
+            return error("Not found.", "not_found")
+        resp = redirect("/")
+        resp.set_cookie(TOKEN_COOKIE, launch_token, httponly=True, samesite="Strict", path="/")
+        return resp
+
     @app.get("/api/app")
     def app_info():
-        return {"version": APP_VERSION, "warnings": list(store.warnings)}
+        return {"version": APP_VERSION, "warnings": list(store.warnings), "desktop": desktop is not None,
+                "data_dir": str(store.dir)}
+
+    # ------------------------------------------------------------ desktop helpers (Step 9)
+
+    @app.post("/api/pick-folder")
+    def pick_folder():
+        if desktop is None:
+            raise ApiError("Choosing a folder with a dialog works in the desktop app; type the path instead.",
+                           "invalid")
+        start = field(body(), "start", required=False) or ""
+        start = os.path.expanduser(start)
+        return {"path": desktop.pick_folder(start if os.path.isdir(start) else str(Path.home()))}
+
+    @app.post("/api/data-folder/open")
+    def data_folder_open():
+        return {"opened": open_in_file_manager(str(store.dir))}
+
+    @app.post("/api/data-folder/import")
+    def data_folder_import():
+        if any(j["status"] == "running" for j in manager.list_jobs()):
+            raise ApiError("Wait for the running backup or restore to finish first.", "conflict")
+        copied = store.import_from(field(body(), "folder"))
+        consoles.close_all()
+        return {"copied": copied, "data_dir": str(store.dir)}
 
     # ------------------------------------------------------------ servers
 
@@ -584,7 +640,10 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
 
     @app.post("/api/settings")
     def settings_save():
-        return store.save_settings(body())
+        data = body()
+        if isinstance(data.get("output_dir"), str) and data["output_dir"].strip():
+            check_output_folder(data["output_dir"])
+        return store.save_settings(data)
 
     return app
 

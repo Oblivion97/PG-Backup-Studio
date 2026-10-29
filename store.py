@@ -17,6 +17,7 @@ import math
 import os
 import secrets
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -25,6 +26,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).resolve().parent
+APP_NAME = "PG Backup Studio"
 CURRENT = 1
 # {file name: {from_version: function(doc) -> doc at from_version + 1}}; none needed yet.
 MIGRATIONS: dict[str, dict[int, object]] = {}
@@ -66,6 +68,15 @@ def new_id(taken=()) -> str:
             return value
 
 
+def default_data_dir() -> Path:
+    """Where the JSON files live: ./data when run from source; the user's app-data folder for the installed
+    desktop app (PyInstaller sets sys.frozen), so reinstalling or updating never touches them (decision 010)."""
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+        return Path(base) / APP_NAME
+    return APP_DIR / "data"
+
+
 def _lock_for(path: Path) -> threading.RLock:
     key = os.path.normcase(str(path))
     with _dir_locks_guard:
@@ -94,7 +105,7 @@ class Store:
     """All four JSON files of one data folder; thread-safe (one lock per folder in this process)."""
 
     def __init__(self, data_dir: str | os.PathLike | None = None):
-        self.dir = Path(data_dir or os.environ.get("PGBS_DATA_DIR") or APP_DIR / "data").expanduser().resolve()
+        self.dir = Path(data_dir or os.environ.get("PGBS_DATA_DIR") or default_data_dir()).expanduser().resolve()
         self.lock = _lock_for(self.dir)
         self.warnings: list[str] = []
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -315,6 +326,35 @@ class Store:
             if profiles["profiles"].pop(server_id, None) is not None:
                 self._write(PROFILES, profiles)
             return True
+
+    # ------------------------------------------------------------ import
+
+    def import_from(self, folder: str | os.PathLike) -> list[str]:
+        """Copy the JSON files of another data folder (e.g. ./data of a source checkout) over this one's.
+
+        Every file found is checked to be JSON with the right container before anything is written;
+        returns the names copied. Used once, when moving to the installed desktop app (decision 010).
+        """
+        src = Path(folder).expanduser().resolve()
+        if src == self.dir:
+            raise StoreError("That is the folder the app already uses.")
+        found = [n for n in _CONTAINERS if (src / n).is_file()]
+        if not found:
+            raise StoreError(f"No PG Backup Studio data files (servers.json, settings.json, ...) in {src}.")
+        docs = {}
+        for name in found:
+            key, kind = _CONTAINERS[name]
+            try:
+                doc = json.loads((src / name).read_bytes().decode("utf-8-sig"))
+            except (OSError, ValueError) as e:
+                raise StoreError(f"{name} in {src} cannot be read: {e}") from e
+            if not isinstance(doc, dict) or not isinstance(doc.get(key), kind):
+                raise StoreError(f"{name} in {src} is not a PG Backup Studio file.")
+            docs[name] = doc
+        with self.lock:
+            for name, doc in docs.items():
+                self._write(name, doc)
+        return found
 
     # ------------------------------------------------------------ settings
 
