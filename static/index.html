@@ -891,6 +891,25 @@ function featureCard(ic, t, d) {
 
 /* ======================================================================== server modal */
 
+// postgres[ql]://user:pw@host:port/db?sslmode=..  (also jdbc:postgresql://..)  or  host=.. port=.. dbname=..
+function parseConnLink(text) {
+  const t = String(text || '').trim(), out = {}, dec = (x) => { try { return decodeURIComponent(x); } catch { return x; } };
+  const m = /^(?:jdbc:)?postgres(?:ql)?:\/\/(?:(.*)@)?(\[[^\]]*\]|[^:\/?#,]*)(?::(\d*))?(?:\/([^?#]*))?(?:\?([^#]*))?/i.exec(t);
+  const put = (k, val) => {
+    k = { dbname: 'db', database: 'db', hostaddr: 'host' }[k] || k;
+    if (['host', 'port', 'user', 'password', 'db', 'sslmode'].includes(k) && val !== '') out[k] = val;
+  };
+  if (m) {
+    const [, auth, host, port, db, query] = m;
+    if (auth != null) { const i = auth.indexOf(':'); put('user', dec(i < 0 ? auth : auth.slice(0, i))); if (i >= 0) put('password', dec(auth.slice(i + 1))); }
+    put('host', dec(host).replace(/^\[(.*)\]$/, '$1')); put('port', port || ''); put('db', dec(db || ''));
+    for (const kv of (query || '').split('&')) { const i = kv.indexOf('='); if (i > 0) put(dec(kv.slice(0, i)).toLowerCase(), dec(kv.slice(i + 1).replace(/\+/g, ' '))); }
+  } else if (/^\w+\s*=/.test(t)) {
+    for (const [, k, raw] of t.matchAll(/(\w+)\s*=\s*('(?:[^'\\]|\\.)*'|\S*)/g)) put(k.toLowerCase(), raw[0] === "'" ? raw.slice(1, -1).replace(/\\(.)/g, '$1') : raw);
+  } else return null;
+  return Object.keys(out).length ? out : null;
+}
+
 function serverModal(s) {
   const editing = !!s;
   const v = Object.assign({ name: '', host: 'localhost', port: 5432, user: 'postgres', sslmode: 'prefer', maintenance_db: '', remember_password: true }, s || {});
@@ -905,7 +924,22 @@ function serverModal(s) {
     clearPw: el('input', { type: 'checkbox' }),
     sslmode: el('select', { class: 'input' }, ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].map((m) => el('option', { value: m, selected: m === v.sslmode }, m))),
     mdb: el('input', { class: 'input', value: v.maintenance_db || '', placeholder: 'postgres (default)', spellcheck: 'false' }),
+    link: el('input', { class: 'input', autocomplete: 'off', spellcheck: 'false', placeholder: 'postgresql://user:password@host:5432/dbname' }),
   };
+  const linkHint = el('div', { class: 'hint', text: 'Paste a connection link to fill in the fields below. The link itself is not saved.' });
+  f.link.addEventListener('input', () => {
+    const c = parseConnLink(f.link.value);
+    if (!c) { linkHint.textContent = f.link.value.trim() ? 'Not a PostgreSQL link (postgresql://… or host=… dbname=…).' : 'Paste a connection link to fill in the fields below. The link itself is not saved.'; return; }
+    if (c.host) f.host.value = c.host;
+    f.port.value = c.port || '5432';
+    if (c.user) f.user.value = c.user;
+    if (c.password != null) f.password.value = c.password;
+    if (c.sslmode && [...f.sslmode.options].some((o) => o.value === c.sslmode)) f.sslmode.value = c.sslmode;
+    f.mdb.value = c.db || '';
+    if (!f.name.value.trim() || f.name.dataset.auto) { f.name.value = c.db ? `${c.db} @ ${c.host || f.host.value}` : (c.host || f.host.value); f.name.dataset.auto = '1'; }
+    linkHint.textContent = 'Filled in: ' + ['host', 'port', 'user', 'password', 'db', 'sslmode'].filter((k) => c[k] != null).map((k) => k === 'db' ? 'database' : k).join(', ') + '.';
+  });
+  f.name.addEventListener('input', () => { delete f.name.dataset.auto; });
   const result = el('div');
   const payload = () => {
     const p = { name: f.name.value, host: f.host.value, port: f.port.value.trim() === '' ? null : (/^\d+$/.test(f.port.value.trim()) ? Number(f.port.value.trim()) : f.port.value),
@@ -926,6 +960,7 @@ function serverModal(s) {
   f.remember.addEventListener('change', syncRemember);
   const body = [
     el('div', { class: 'form-grid' },
+      el('div', { class: 'field span-2' }, el('label', null, 'Connection link (optional)'), f.link, linkHint),
       el('div', { class: 'field span-2' }, el('label', null, 'Display name'), f.name),
       el('div', { class: 'field' }, el('label', null, 'Host'), f.host),
       el('div', { class: 'field' }, el('label', null, 'Port'), f.port),
@@ -936,7 +971,7 @@ function serverModal(s) {
           el('span', { class: 'd', text: 'Saved in plain text in data/servers.json (readable only by your Windows user). When off, you are asked once per app session.' }))),
         clearRow),
       el('div', { class: 'field' }, el('label', null, 'SSL mode'), f.sslmode),
-      el('div', { class: 'field' }, el('label', null, 'Maintenance database'), f.mdb, el('div', { class: 'hint', text: 'Used for listing and managing databases.' }))),
+      el('div', { class: 'field' }, el('label', null, 'Maintenance database'), f.mdb, el('div', { class: 'hint', text: 'Used for listing and managing databases. A database from the link goes here.' }))),
     result,
   ];
   const m = modal({ title: editing ? 'Edit server' : 'Add server', sub: editing ? `${s.user}@${s.host}:${s.port}` : 'Connection details for a PostgreSQL server',
@@ -1479,6 +1514,8 @@ function drawBackup(view) {
   right.appendChild(summaryCard(b));
   clear(view, el('div', { class: 'grid-main' }, left, right));
   $('content').scrollTop = scrollY;
+  const tw = view.querySelector('[data-tw]');   // the table list is rebuilt too: keep its scroll position
+  if (tw) tw.scrollTop = b.tScroll || 0;
 }
 
 async function resetProfile() {
@@ -1626,7 +1663,7 @@ function tablesCard(b) {
     el('div', { class: 'toolbar' }, el('div', { class: 'search' }, icon('search'), filter), show, sort, el('div', { class: 'grow' }),
       schemaMode ? el('span', { class: 'badge', text: 'Schema-only mode: no rows are copied' }) : null),
     bulk,
-    el('div', { class: 'table-wrap', style: 'max-height: 640px; overflow-y: auto' }, el('table', { class: 't' },
+    el('div', { class: 'table-wrap', style: 'max-height: 640px; overflow-y: auto', 'data-tw': '1', onscroll: (e) => { b.tScroll = e.target.scrollTop; } }, el('table', { class: 't' },
       el('thead', null, el('tr', null, el('th', { style: 'width: 34px' }, all), el('th', null, 'Table'), el('th', { class: 'num' }, 'Size'), el('th', { class: 'num' }, 'Est. rows'), el('th', null, 'Data to back up'))),
       tbody)),
     pager);
