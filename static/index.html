@@ -342,6 +342,12 @@ details.adv > div { margin-top: 12px; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .problem { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .problem .m { flex: 1; min-width: 0; font-size: 13px; }
+.tgroups { padding: 4px 14px 14px; }
+.tg-h { display: flex; align-items: center; gap: 10px; padding: 12px 4px 8px; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.tgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+.tcard { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; display: grid; gap: 6px; min-width: 0; background: var(--surface); }
+.tcard.large { background: color-mix(in srgb, var(--warn-soft) 55%, transparent); }
+.tcard .cell-name span.n { max-width: 100%; }
 .order-cell { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 .order-cell select { max-width: 260px; }
 .order-cell .input.n { width: 110px; }
@@ -391,6 +397,7 @@ details.adv > div { margin-top: 12px; }
 <script src="ws/grid.js"></script>
 <script src="ws/console.js"></script>
 <script src="ws/explorer.js"></script>
+<script src="ws/backup.js"></script>
 <script>
 'use strict';
 
@@ -1578,132 +1585,6 @@ function precheckCard(b) {
   return el('div', { class: 'card' }, head, body);
 }
 
-function setOpt(b, schema, table, patch) {
-  const k = tkey(schema, table);
-  b.opts.set(k, Object.assign({ data: 'full', order_by: null, limit: 1000 }, b.opts.get(k) || {}, patch));
-}
-
-const TABLE_PAGE = 100;
-
-function tablesCard(b) {
-  const c = b.check;
-  const card = el('div', { class: 'card' });
-  const head = el('div', { class: 'card-h' }, el('h2', { text: 'Tables and data options' }),
-    c ? el('span', { class: 'desc', text: `${fmt.plural(c.tables.length, 'table')} · ${c.tables.filter((t) => t.large).length} large` }) : null);
-  card.appendChild(head);
-  if (!c) { card.appendChild(el('div', { class: 'loading' }, el('span', { class: 'spin' }), 'Waiting for the check…')); return card; }
-  if (!c.tables.length) { card.appendChild(el('div', { class: 'empty' }, el('p', { text: 'No tables in the selected schemas.' }))); return card; }
-  const schemaMode = b.mode === 'schema';
-  const optOf = (t) => b.opts.get(tkey(t.schema, t.name)) || { data: 'full' };
-  const filter = el('input', { class: 'input sm', placeholder: 'Filter tables', value: b.filter, 'data-filter': '1', 'aria-label': 'Filter tables' });
-  const show = el('select', { class: 'input sm', style: 'width: auto', 'aria-label': 'Which tables to show' },
-    [['all', 'All tables'], ['large', 'Large tables'], ['changed', 'Not full']].map(([v, t]) => el('option', { value: v, selected: b.show === v }, t)));
-  const sort = el('select', { class: 'input sm', style: 'width: auto', 'aria-label': 'Sort tables' },
-    [['size', 'Largest first'], ['name', 'By name']].map(([v, t]) => el('option', { value: v, selected: b.sort === v }, t)));
-  const tbody = el('tbody');
-  const all = el('input', { type: 'checkbox', 'aria-label': 'Select every table on this page' });
-  const bulk = el('div', { class: 'toolbar bulk' });
-  const pager = el('div', { class: 'row wrap', style: 'padding: 10px 18px; gap: 10px' });
-  let matched = [];
-  let shown = [];
-
-  const setMany = (keys, data) => {
-    let skipped = 0;
-    for (const t of c.tables) {
-      const k = tkey(t.schema, t.name);
-      if (!keys.has(k)) continue;
-      const o = optOf(t);
-      const order = o.order_by || t.default_order_column;
-      if (data === 'latest' && !order) { skipped++; continue; }
-      setOpt(b, t.schema, t.name, { data, order_by: order });
-    }
-    if (skipped) toast(`${fmt.plural(skipped, 'table')} kept their option: no primary key or date/time column to order "Latest N" by.`, 'warn');
-    refreshBackup();
-  };
-  const drawBulk = () => {
-    const n = b.sel.size;
-    clear(bulk,
-      el('span', { style: 'font-weight: 600', text: n ? `${fmt.plural(n, 'table')} selected` : 'Tick tables to change several at once' }),
-      matched.length > shown.length && n < matched.length ? el('button', { class: 'btn sm ghost', type: 'button', onclick: () => { for (const t of matched) b.sel.add(tkey(t.schema, t.name)); draw(); } }, `Select all ${fmt.num(matched.length)} matching`) : null,
-      n ? el('button', { class: 'btn sm ghost', type: 'button', onclick: () => { b.sel.clear(); draw(); } }, 'Clear selection') : null,
-      el('div', { class: 'grow' }),
-      el('span', { class: 'subtle', text: 'Set to' }),
-      el('div', { class: 'seg sm' }, [['full', 'Full'], ['latest', 'Latest N'], ['schema', 'Schema only']].map(([v, label]) =>
-        el('button', { type: 'button', disabled: !n || schemaMode, onclick: () => setMany(b.sel, v) }, label))));
-  };
-  const draw = () => {
-    const q = b.filter.toLowerCase();
-    const sorted = c.tables.slice().sort(b.sort === 'name' ? (x, y) => x.qname.localeCompare(y.qname)
-      : (x, y) => (y.large - x.large) || (y.size - x.size) || x.qname.localeCompare(y.qname));
-    matched = sorted.filter((t) => (b.show !== 'large' || t.large) && (b.show !== 'changed' || optOf(t).data !== 'full') && (!q || t.qname.toLowerCase().includes(q)));
-    const pages = Math.max(1, Math.ceil(matched.length / TABLE_PAGE));
-    b.page = Math.min(Math.max(0, b.page), pages - 1);
-    shown = matched.slice(b.page * TABLE_PAGE, (b.page + 1) * TABLE_PAGE);
-    clear(tbody, shown.map((t) => tableRow(b, t, schemaMode, draw)));
-    if (!shown.length) tbody.appendChild(el('tr', null, el('td', { colspan: '5' }, el('div', { class: 'empty', style: 'padding: 20px' },
-      el('p', { text: b.show === 'large' ? 'No large tables. Choose "All tables" to see every table.' : b.show === 'changed' ? 'Every table is backed up in full.' : 'No table matches the filter.' })))));
-    const onPage = shown.filter((t) => b.sel.has(tkey(t.schema, t.name))).length;
-    all.checked = shown.length > 0 && onPage === shown.length;
-    all.indeterminate = onPage > 0 && onPage < shown.length;
-    const from = matched.length ? b.page * TABLE_PAGE + 1 : 0;
-    clear(pager,
-      el('span', { class: 'subtle', text: `${fmt.num(from)}–${fmt.num(b.page * TABLE_PAGE + shown.length)} of ${fmt.num(matched.length)} tables${matched.length < c.tables.length ? ` (${fmt.num(c.tables.length)} in total)` : ''}` }),
-      el('div', { class: 'grow' }),
-      pages > 1 ? el('button', { class: 'btn sm', type: 'button', disabled: b.page === 0, onclick: () => { b.page--; draw(); } }, 'Previous') : null,
-      pages > 1 ? el('span', { class: 'subtle', text: `Page ${b.page + 1} of ${pages}` }) : null,
-      pages > 1 ? el('button', { class: 'btn sm', type: 'button', disabled: b.page >= pages - 1, onclick: () => { b.page++; draw(); } }, 'Next') : null);
-    drawBulk();
-  };
-  filter.addEventListener('input', () => { b.filter = filter.value; b.page = 0; draw(); });
-  show.addEventListener('change', () => { b.show = show.value; b.page = 0; draw(); });
-  sort.addEventListener('change', () => { b.sort = sort.value; b.page = 0; draw(); });
-  all.addEventListener('change', () => { for (const t of shown) { const k = tkey(t.schema, t.name); if (all.checked) b.sel.add(k); else b.sel.delete(k); } draw(); });
-  draw();
-  card.append(
-    el('div', { class: 'toolbar' }, el('div', { class: 'search' }, icon('search'), filter), show, sort, el('div', { class: 'grow' }),
-      schemaMode ? el('span', { class: 'badge', text: 'Schema-only mode: no rows are copied' }) : null),
-    bulk,
-    el('div', { class: 'table-wrap', style: 'max-height: 640px; overflow-y: auto', 'data-tw': '1', onscroll: (e) => { b.tScroll = e.target.scrollTop; } }, el('table', { class: 't' },
-      el('thead', null, el('tr', null, el('th', { style: 'width: 34px' }, all), el('th', null, 'Table'), el('th', { class: 'num' }, 'Size'), el('th', { class: 'num' }, 'Est. rows'), el('th', null, 'Data to back up'))),
-      tbody)),
-    pager);
-  return card;
-}
-
-function tableRow(b, t, schemaMode, redraw) {
-  const k = tkey(t.schema, t.name);
-  const o = b.opts.get(k) || { data: 'full', order_by: t.default_order_column, limit: 1000 };
-  const seg = el('div', { class: 'seg sm' }, [['full', 'Full'], ['latest', 'Latest N'], ['schema', 'Schema only']].map(([v, label]) =>
-    el('button', { type: 'button', class: o.data === v ? 'on' : '', disabled: schemaMode || (v === 'latest' && !t.order_columns.length && !o.order_by),
-      title: v === 'latest' && !t.order_columns.length ? 'No primary key or date/time column to order by' : null,
-      onclick: () => { setOpt(b, t.schema, t.name, { data: v, order_by: o.order_by || t.default_order_column }); refreshBackup(); } }, label)));
-  const cell = el('td', null, seg);
-  if (o.data === 'latest' && !schemaMode) {
-    const cols = t.order_columns.slice();
-    if (o.order_by && !cols.some((c) => c.name === o.order_by)) cols.push({ name: o.order_by, type: '?', pk: false, timestamp_like: false, index: null });
-    const sel = el('select', { class: 'input sm', 'aria-label': 'Ordering column', onchange: (e) => { setOpt(b, t.schema, t.name, { order_by: e.target.value }); refreshBackup(); } },
-      cols.map((c) => el('option', { value: c.name, selected: c.name === o.order_by },
-        `${c.name} (${c.type}${c.pk ? ', PK' : ''})${c.name === t.default_order_column ? ' · suggested' : ''}${c.index && c.index.usable ? ' · indexed' : ''}`)));
-    const n = el('input', { class: 'input sm n', value: String(o.limit), inputmode: 'numeric', 'aria-label': 'Number of newest rows',
-      onchange: (e) => { setOpt(b, t.schema, t.name, { limit: e.target.value }); refreshBackup(); } });
-    const chosen = cols.find((c) => c.name === o.order_by);
-    const idx = chosen && chosen.index;
-    cell.append(el('div', { class: 'order-cell' }, el('span', { class: 'subtle', text: 'newest' }), n, el('span', { class: 'subtle', text: 'rows by' }), sel));
-    if (idx && idx.message) cell.append(el('div', { class: 'advice ' + (idx.usable ? 'good' : 'bad') }, icon(idx.usable ? 'check' : 'alert'), el('span', { text: idx.message })));
-  }
-  if (t.option_error) cell.append(el('div', { class: 'advice bad', style: 'color: var(--danger)' }, icon('alert'), el('span', { text: t.option_error })));
-  const pick = el('input', { type: 'checkbox', checked: b.sel.has(k), 'aria-label': `Select ${t.qname}`,
-    onchange: (e) => { if (e.target.checked) b.sel.add(k); else b.sel.delete(k); redraw(); } });
-  return el('tr', { class: t.large ? 'large' : '' },
-    el('td', null, pick),
-    el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'n', text: t.qname, title: t.qname }),
-      t.large ? el('span', { class: 'badge warn', title: 'Over the large-table threshold (' + t.large_reason.join(' and ') + ')' }, 'large') : null,
-      t.kind === 'partitioned' ? el('span', { class: 'badge info', text: `${t.partitions} partitions` }) : null)),
-    el('td', { class: 'num', title: t.size_exact ? '' : 'Estimated (no permission for the exact size)' }, fmt.bytes(t.size), t.size_exact ? '' : ' ≈'),
-    el('td', { class: 'num' }, t.rows_unknown ? el('span', { class: 'subtle', text: 'not analyzed' }) : '≈ ' + fmt.num(t.est_rows)),
-    cell);
-}
-
 function functionsCard(b) {
   return el('div', { class: 'card' },
     el('div', { class: 'card-h' }, el('h2', { text: 'Functions only' })),
@@ -1813,7 +1694,7 @@ async function viewRestore(view, token) {
   const pre = state.restorePrefill || {};
   state.restorePrefill = null;
   if (!state.restore || state.restore.sid !== sid || pre.history_id || pre.target) {
-    const r = { sid, source: 'history', history_id: null, file: '', mode: 'create', existing: '', newName: '', owner: '', confirm: '',
+    const r = { sid, tsid: sid, tError: null, source: 'history', history_id: null, file: '', mode: 'create', existing: '', newName: '', owner: '', confirm: '',
       allow_non_empty: false, on_error: 'continue', single_transaction: false, contents: null };
     const backups = hist.filter((h) => h.kind === 'backup' && h.status === 'success' && h.mode !== 'functions');
     if (pre.history_id) {
@@ -1842,16 +1723,30 @@ async function loadContents() {
   if (!r.existing || r.existing.includes('/')) return;
   const name = r.existing;
   try {
-    const c = await api('GET', `/api/servers/${enc(r.sid)}/databases/${enc(name)}/contents`);
+    const c = await api('GET', `/api/servers/${enc(r.tsid)}/databases/${enc(name)}/contents`);
     if (state.restore === r && r.existing === name) { r.contents = c; refreshRestore(); }
   } catch (e) { if (state.restore === r) { r.contents = { error: e.message }; refreshRestore(); } }
+}
+
+// Target server changed (or its databases are not loaded yet): load its database list, asking for a password if needed.
+async function loadTargetDbs() {
+  const r = state.restore, sid = r.tsid;
+  r.tError = null;
+  r.tLoading = sid;
+  try { await loadDatabases(sid); } catch (e) { if (state.restore === r && r.tsid === sid) r.tError = e.message; }
+  if (r.tLoading === sid) r.tLoading = null;
+  if (state.restore === r && r.tsid === sid) {
+    if (r.newName && (state.dbs[sid] || []).some((d) => d.name === r.newName)) r.newName = uniqueName(r.newName, state.dbs[sid]);
+    refreshRestore();
+  }
 }
 
 function drawRestore(view) {
   restoreView = view;
   const r = state.restore;
-  const s = server(r.sid);
-  const dbs = state.dbs[r.sid] || [];
+  const s = server(r.tsid) || server(r.sid);
+  if (!state.dbs[r.tsid] && !r.tError && r.tLoading !== r.tsid) loadTargetDbs();
+  const dbs = state.dbs[r.tsid] || [];
   const backups = (state.history || []).filter((h) => h.kind === 'backup' && h.status === 'success' && h.mode !== 'functions');
   const chosen = backups.find((h) => h.id === r.history_id);
   const scrollY = $('content').scrollTop;
@@ -1878,20 +1773,30 @@ function drawRestore(view) {
       el('div', { class: 'hint', text: 'Gzip is detected from the file content, not the extension.' }));
   }
 
-  // 2. target
-  const modeCards = el('div', { class: 'radio-cards' }, [
-    ['create', 'New database', 'Created from template0, UTF8'],
-    ['existing', 'Existing database', 'Restore into a database that exists'],
-    ['recreate', 'Drop and recreate', 'Replace an existing database'],
-  ].map(([k, t, d]) => el('button', { type: 'button', class: 'radio-card' + (r.mode === k ? ' on' : ''), onclick: () => { r.mode = k; r.confirm = ''; refreshRestore(); if (k !== 'create' && r.existing) loadContents(); } },
-    el('span', { class: 't' }, k === 'recreate' ? icon('alert') : null, t), el('span', { class: 'd', text: d }))));
+  // 2. target: server, then a new or an existing database on it ("drop and recreate" is an option of existing)
+  const serverSelect = el('select', { class: 'input', 'aria-label': 'Target server', onchange: (e) => {
+    Object.assign(r, { tsid: e.target.value, tError: null, existing: '', contents: null, confirm: '', allow_non_empty: false, owner: '' });
+    if (r.mode === 'recreate') r.mode = 'existing';
+    refreshRestore();
+  } }, state.servers.map((x) => el('option', { value: x.id, selected: x.id === r.tsid }, `${x.name} · ${x.host}:${x.port}`)));
+  const modeCards = el('div', { class: 'radio-cards', style: 'grid-template-columns: repeat(2, minmax(0, 1fr))' }, [
+    ['create', 'New database', 'Create it on this server, then restore'],
+    ['existing', 'Existing database', 'Restore into a database on this server'],
+  ].map(([k, t, d]) => el('button', { type: 'button', class: 'radio-card' + ((k === 'create') === (r.mode === 'create') ? ' on' : ''),
+    onclick: () => { if ((k === 'create') === (r.mode === 'create')) return; r.mode = k; r.confirm = ''; refreshRestore(); if (k !== 'create' && r.existing) loadContents(); } },
+    el('span', { class: 't', text: t }), el('span', { class: 'd', text: d }))));
   const dbSelect = el('select', { class: 'input', onchange: (e) => { r.existing = e.target.value; r.confirm = ''; r.allow_non_empty = false; refreshRestore(); loadContents(); } },
     el('option', { value: '' }, 'Choose a database…'), dbs.map((d) => el('option', { value: d.name, selected: d.name === r.existing, disabled: r.mode === 'recreate' && d.protected },
       d.name + (d.protected && r.mode === 'recreate' ? ' (protected)' : '') + (d.size !== null ? ` · ${fmt.bytes(d.size)}` : ''))));
   const targetFields = el('div', { class: 'stack' });
-  if (r.mode === 'create') {
+  if (r.tError) {
+    targetFields.append(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: `Cannot connect to ${s.name}` }), r.tError,
+      el('div', { style: 'margin-top: 8px' }, el('button', { class: 'btn sm', type: 'button', onclick: () => { r.tError = null; refreshRestore(); } }, 'Retry')))));
+  } else if (!state.dbs[r.tsid]) {
+    targetFields.append(el('div', { class: 'loading' }, el('span', { class: 'spin' }), `Connecting to ${s.name}…`));
+  } else if (r.mode === 'create') {
     const owner = el('select', { class: 'input', onchange: (e) => { r.owner = e.target.value; } }, el('option', { value: '' }, 'Default (current user)'));
-    rolesOf(r.sid).then((roles) => { for (const x of roles) owner.appendChild(el('option', { value: x.name, selected: x.name === r.owner }, x.name)); }).catch(() => {});
+    rolesOf(r.tsid).then((roles) => { for (const x of roles) owner.appendChild(el('option', { value: x.name, selected: x.name === r.owner }, x.name)); }).catch(() => {});
     const exists = dbs.some((d) => d.name === r.newName);
     targetFields.append(el('div', { class: 'form-grid' },
       el('div', { class: 'field' }, el('label', null, 'New database name'),
@@ -1899,7 +1804,10 @@ function drawRestore(view) {
         exists ? el('div', { class: 'hint', style: 'color: var(--danger)', text: 'A database with this name exists. Choose another name or "Drop and recreate".' }) : null),
       el('div', { class: 'field' }, el('label', null, 'Owner'), owner)));
   } else {
-    targetFields.append(el('div', { class: 'field' }, el('label', null, r.mode === 'recreate' ? 'Database to drop and recreate' : 'Target database'), dbSelect));
+    targetFields.append(el('div', { class: 'field' }, el('label', null, 'Target database'), dbSelect),
+      el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: r.mode === 'recreate',
+        onchange: (e) => { r.mode = e.target.checked ? 'recreate' : 'existing'; r.confirm = ''; refreshRestore(); if (r.existing) loadContents(); } }),
+        el('span', null, el('span', { class: 't', text: 'Drop and recreate it first' }), el('span', { class: 'd', text: 'Deletes everything in it, then restores into a fresh, empty database.' }))));
     if (r.existing) {
       const busyDb = (dbs.find((d) => d.name === r.existing) || {}).busy || [];
       if (busyDb.length) targetFields.append(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: `A job is using ${r.existing} right now.` })));
@@ -1937,6 +1845,7 @@ function drawRestore(view) {
     let why = '';
     if (r.source === 'history' && !chosen) why = 'Choose a backup';
     else if (r.source === 'file' && !r.file.trim()) why = 'Enter a file path';
+    else if (!state.dbs[r.tsid]) why = r.tError ? 'Cannot connect to the target server' : 'Connecting to the target server…';
     else if (!target) why = 'Choose the target database';
     else if (r.mode === 'create' && dbs.some((d) => d.name === r.newName)) why = 'That database already exists';
     else if (r.mode === 'existing' && r.contents && !r.contents.empty && !r.contents.error && !r.allow_non_empty) why = 'Confirm restoring into a non-empty database';
@@ -1951,8 +1860,10 @@ function drawRestore(view) {
   clear(view, el('div', { class: 'grid-main' },
     el('div', { class: 'stack', style: 'gap: 20px; min-width: 0' },
       el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(1), el('h2', { text: 'Backup to restore' }), el('div', { class: 'grow' }), srcSeg), el('div', { class: 'card-b' }, srcBody)),
-      el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(2), el('h2', { text: 'Target' }), el('span', { class: 'desc', text: `on ${s.name}` })),
-        el('div', { class: 'card-b stack', style: 'gap: 16px' }, modeCards, targetFields)),
+      el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(2), el('h2', { text: 'Restore to' })),
+        el('div', { class: 'card-b stack', style: 'gap: 16px' },
+          el('div', { class: 'field' }, el('label', null, 'Server'), serverSelect, el('div', { class: 'hint', text: 'Any server you have added. The backup does not have to come from it.' })),
+          modeCards, targetFields)),
       el('div', { class: 'card' }, el('div', { class: 'card-h' }, stepNum(3), el('h2', { text: 'Options' })),
         el('div', { class: 'card-b stack', style: 'gap: 16px' }, errSeg,
           el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: r.single_transaction, onchange: (e) => { r.single_transaction = e.target.checked; refreshRestore(); } }),
@@ -1975,7 +1886,7 @@ function stepNum(n) { return el('span', { class: 'badge accent', style: 'width: 
 async function startRestore(btn) {
   const r = state.restore;
   const database = r.mode === 'create' ? r.newName.trim() : r.existing;
-  const body = { server_id: r.sid, database, options: { on_error: r.single_transaction ? 'stop' : r.on_error, single_transaction: r.single_transaction },
+  const body = { server_id: r.tsid, database, options: { on_error: r.single_transaction ? 'stop' : r.on_error, single_transaction: r.single_transaction },
     target: { mode: r.mode, owner: r.mode === 'create' ? (r.owner || null) : null, allow_non_empty: r.mode === 'existing' && r.allow_non_empty, confirm: r.mode === 'recreate' ? r.confirm : null } };
   if (r.source === 'history') body.history_id = r.history_id; else body.file = r.file.trim();
   busy(btn, true, 'Starting…');
@@ -1983,7 +1894,7 @@ async function startRestore(btn) {
     const res = await api('POST', '/api/restore', body);
     toast(`Restore into ${database} started.`, 'ok');
     state.openJob = res.job_id;
-    delete state.dbs[r.sid];
+    delete state.dbs[r.tsid];
     state.restore = null;
     await pollJobs();
     go(`#/activity/${enc(res.job_id)}`);

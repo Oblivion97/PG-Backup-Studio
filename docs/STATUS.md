@@ -38,7 +38,25 @@ ARCHITECTURE §15, decision 010. Tests: `tests/test_step9_desktop.py`. Next: the
 **Added 2026-10-29 (user request):** Add / Edit server has a "Connection link" field; pasting
 `postgresql://user:pw@host:port/db?sslmode=…`, a JDBC URL or `host=… dbname=…` fills host, port, user, password,
 SSL mode and maintenance database (`parseConnLink` in `static/index.html`; the link itself is not saved). Released as v0.9.1.
-`static/index.html` is now 152,806 of its 153,600-byte limit.
+
+**Fixed 2026-10-29 (not released):** Backup → table list kept jumping to the top when a row's option was changed;
+the list now keeps its scroll position (`tablesCard` / `drawBackup`).
+
+**Added 2026-10-29 (user request, not released):** the backup table list moved to `static/backup.js` (served at
+`/ws/backup.js`, in `WORKSPACE_SCRIPTS`) and got a **List / Grid** switch (remembered per browser). Grid shows cards
+grouped by size ranges fitted to the database's tables (`sizeBounds`: up to 10 groups with about the same number
+of tables each, cut at round sizes such as 1.5 / 2 / 2.5 / 3 / 4 / 5 / 6 / 7.5 / 10 × KB, MB, GB); largest range
+first, each range sorted by the Sort choice (largest first / by name); filter, show, paging, bulk options and a
+"Select group" button work in both views.
+
+**Changed 2026-10-29 (user request, not released):** Restore → step 2 is now "Restore to": a **Server** list (any
+saved server, not only the one in the URL; `state.restore.tsid`, its databases loaded on change with the usual
+password prompt), then **New database** or **Existing database**; "Drop and recreate" became a checkbox under
+Existing (still asks to type the name). The API already took any `server_id`. `static/index.html` is about 146.3 of
+150 KiB.
+
+**Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
+"Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.
 
 How to start a new session (PowerShell, in this folder):
 ```
