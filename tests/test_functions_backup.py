@@ -108,7 +108,9 @@ def test_a_functions_backup_cannot_be_restored_from_history(tmp_path):
 
 @pytest.fixture(scope="module")
 def script() -> str:
-    return re.findall(r"<script>(.*?)</script>", PAGE.read_text(encoding="utf-8"), re.S)[0]
+    # the inline script plus backup.js, which holds the backup panel's table list
+    inline = re.findall(r"<script>(.*?)</script>", PAGE.read_text(encoding="utf-8"), re.S)[0]
+    return inline + "\n" + (PAGE.parent / "backup.js").read_text(encoding="utf-8")
 
 
 def test_ui_offers_functions_mode_and_skips_the_table_check(script):
@@ -123,6 +125,12 @@ def test_ui_lists_every_table_with_pages_and_bulk_options(script):
     assert "const TABLE_PAGE = 100;" in script
     assert "Select all ${fmt.num(matched.length)} matching" in script
     assert "setMany(b.sel, v)" in script
+
+
+def test_ui_table_list_has_list_and_grid_views(script):
+    assert "[['list', 'List'], ['grid', 'Grid']]" in script
+    assert "store('tableView', v)" in script         # the chosen view is remembered per browser
+    assert "function sizeBounds(tables)" in script and "tableTile(b, t, schemaMode, draw)" in script
 
 
 # ---------------------------------------------------------------- round trip (PostgreSQL)

@@ -65,7 +65,7 @@ def test_page_size_budget(html):
 def test_no_external_resources(html):
     # the only script files are the app's own workspace scripts, by relative path (Step 8)
     srcs = re.findall(r"<script[^>]+src=[\"']([^\"']*)", html, re.I)
-    assert srcs == ["ws/grid.js", "ws/console.js", "ws/explorer.js"], srcs
+    assert srcs == ["ws/grid.js", "ws/console.js", "ws/explorer.js", "ws/backup.js"], srcs
     assert set(srcs) <= {f"ws/{n}" for n in WORKSPACE_SCRIPTS}
     assert not re.search(r"<link[^>]+href=", html, re.I)
     assert not re.search(r"@import|url\(\s*['\"]?https?:", html, re.I)
