@@ -32,7 +32,7 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.9.3"
+APP_VERSION = "0.9.4"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
@@ -310,9 +310,13 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
 
     @app.delete("/api/servers/<sid>")
     def servers_delete(sid):
+        if manager.jobs_using(sid):
+            raise ApiError("A backup or restore is running on this server; wait for it to finish or cancel it first.",
+                           "conflict")
         if not store.delete_server(sid):
             raise ApiError("This server no longer exists.", "not_found")
         passwords.forget(sid)
+        consoles.close_for(sid)   # its query tabs' connections
         return {"deleted": True}
 
     @app.post("/api/servers/test")

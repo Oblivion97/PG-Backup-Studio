@@ -75,6 +75,12 @@ user, maintenance database) and renaming name clashes to "<name> (2)" (`Store.ex
 downloads (`webview.settings["ALLOW_DOWNLOADS"]`), so server export and the grid's CSV/JSON/… exports get a Save
 dialog instead of being cancelled. Tests: `tests/test_server_export.py`, `tests/test_step9_desktop.py`.
 
+**Added 2026-11-17 (user request), v0.9.4:** removing a saved server is easy to find: a **Remove** button next to
+**Edit server** in the page header, a right-click menu on sidebar servers (Edit server / Remove server), and the Edit
+dialog's button renamed "Remove server" (shared `removeServer` / `serverContextMenu` in `static/servers.js`).
+`DELETE /api/servers/<id>` now refuses (409) while a backup/restore runs on that server (`jobs_using(sid)` with any
+database) and closes the server's query sessions. Tests: `tests/test_server_remove.py`.
+
 **Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
 "Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.
 

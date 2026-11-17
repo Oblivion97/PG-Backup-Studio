@@ -41,6 +41,8 @@ Backup files are never deleted.
 - Add a server by pasting a connection link (`postgresql://user:password@host:5432/db?sslmode=require`, a JDBC
   URL, or `host=… port=… dbname=…`); host, port, user, password, database and SSL mode are filled in.
 - Create, rename, clone and drop databases; see and end connections. System databases are protected.
+- Remove a saved server with **Remove** next to **Edit server**, or right-click it in the sidebar → **Remove server**.
+  Only the saved connection goes; nothing changes on the PostgreSQL server, and backup files and history are kept.
 - Move servers to another PC: Settings → **Servers → Export…** saves the chosen servers to a `.json` file
   (passwords only if you tick **Include saved passwords**; they are then in the file as plain text). On the other
   PC, Settings → **Servers → Import…** adds them. Servers already saved there are skipped, and a name that is

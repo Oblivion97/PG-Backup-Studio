@@ -273,11 +273,12 @@ class JobManager:
                 raise JobError(f"Database {dbname} cannot be dropped: it is a template or the maintenance database.")
         return {"mode": mode, "owner": owner, "allow_non_empty": allow}
 
-    def jobs_using(self, server_id: str, dbname: str) -> list[str]:
-        """Ids of running jobs that use `dbname` on that server (drop / rename / kill must wait for them)."""
+    def jobs_using(self, server_id: str, dbname: str | None = None) -> list[str]:
+        """Ids of running jobs that use `dbname` (any database when None) on that server (drop / rename / kill /
+        removing the server must wait for them)."""
         with self._lock:
             return [j.id for j in self._jobs.values()
-                    if j.status == "running" and j._server["id"] == server_id and j.database == dbname]
+                    if j.status == "running" and j._server["id"] == server_id and dbname in (None, j.database)]
 
     def _register(self, kind: str, server: dict, dbname: str, opts, path: str | None = None,
                   target: dict | None = None) -> Job:

@@ -196,8 +196,11 @@ def test_tray_quit_asks_while_work_is_running(monkeypatch):
     assert desktop.quit_allowed(_Jobs("done"), _Consoles()) is True and len(boxes) == 2
 
 
-def test_second_launch_finds_no_browser_mode_app():
+def test_second_launch_finds_no_browser_mode_app(monkeypatch):
     desktop = pytest.importorskip("desktop")
+    import uuid
+    # a name of its own: a real PG Backup Studio running in browser mode on this PC must not affect the test
+    monkeypatch.setattr(desktop, "OPEN_EVENT_NAME", f"Local\\PGBackupStudio.Test.{uuid.uuid4().hex}")
     assert desktop.signal_running_instance() is False   # nothing listening: the "already open" message is shown
 
 

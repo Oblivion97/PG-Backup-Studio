@@ -785,8 +785,8 @@ function renderServerList() {
     return;
   }
   clear(list, state.servers.map((s) => el('button', {
-    type: 'button', class: 'srv' + (s.id === current ? ' active' : ''), title: `${s.user}@${s.host}:${s.port}`,
-    onclick: () => go(`#/s/${enc(s.id)}/databases`),
+    type: 'button', class: 'srv' + (s.id === current ? ' active' : ''), title: `${s.user}@${s.host}:${s.port} · right-click to edit or remove`,
+    onclick: () => go(`#/s/${enc(s.id)}/databases`), oncontextmenu: (e) => serverContextMenu(e, s),
   }, el('span', { class: 'dot ' + (state.conn[s.id] === 'ok' ? 'ok' : state.conn[s.id] === 'err' ? 'err' : '') }),
   el('span', { class: 'meta' }, el('div', { class: 'name', text: s.name }), el('div', { class: 'host', text: `${s.host}:${s.port}` })))));
 }
@@ -861,7 +861,8 @@ function renderHeader() {
   }
   const actions = [];
   if (s && r.view === 'databases') {
-    actions.push(el('button', { class: 'btn', type: 'button', onclick: () => serverModal(s) }, icon('edit'), 'Edit server'));
+    actions.push(el('button', { class: 'btn', type: 'button', onclick: () => serverModal(s) }, icon('edit'), 'Edit server'),
+      el('button', { class: 'btn', type: 'button', style: 'color: var(--danger)', title: 'Remove this saved server from the app', onclick: () => removeServer(s) }, icon('trash'), 'Remove'));
   }
   clear(titleRow, el('h1', { text: titles[r.view] || '' }), el('div', { class: 'grow' }), actions);
   document.title = (titles[r.view] || 'PG Backup Studio') + (s ? ` · ${s.name}` : '') + ' — PG Backup Studio';
@@ -960,7 +961,7 @@ function serverModal(s) {
   const test = el('button', { class: 'btn', type: 'button' }, icon('zap'), 'Test connection');
   const save = el('button', { class: 'btn primary', type: 'button' }, editing ? 'Save changes' : 'Add server');
   const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
-  const del = editing ? el('button', { class: 'btn ghost', type: 'button', style: 'color: var(--danger); margin-right: auto' }, icon('trash'), 'Delete') : null;
+  const del = editing ? el('button', { class: 'btn ghost', type: 'button', style: 'color: var(--danger); margin-right: auto' }, icon('trash'), 'Remove server') : null;
   const syncRemember = () => {
     clearRow.classList.toggle('hidden', !(editing && v.has_password && f.remember.checked));
   };
@@ -1010,20 +1011,7 @@ function serverModal(s) {
       go(`#/s/${enc(rec.id)}/databases`);
     } catch (e) { busy(save, false); m.error(e.message); }
   };
-  if (del) {
-    del.onclick = async () => {
-      const yes = await confirmBox({ title: `Delete ${s.name}?`, danger: true, confirmLabel: 'Delete server',
-        message: 'The saved connection and its remembered backup settings are removed. Backup files and history are kept.' });
-      if (!yes) return;
-      try {
-        await api('DELETE', `/api/servers/${enc(s.id)}`);
-        m.close();
-        await loadServers();
-        toast(`${s.name} deleted.`, 'ok');
-        go('#/');
-      } catch (e) { toastError(e); }
-    };
-  }
+  if (del) del.onclick = () => removeServer(s, () => m.close());
 }
 
 async function loadServers() {

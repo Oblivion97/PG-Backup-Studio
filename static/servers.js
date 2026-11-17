@@ -4,6 +4,32 @@
  */
 'use strict';
 
+/** Ask, then remove a saved server; `done` runs after it is gone (e.g. close the Edit dialog). */
+async function removeServer(s, done) {
+  const yes = await confirmBox({ title: `Remove ${s.name}?`, danger: true, confirmLabel: 'Remove server',
+    message: `The saved connection ${s.user}@${s.host}:${s.port} and its remembered backup settings are removed from this app. ` +
+      'Nothing on the PostgreSQL server changes, and backup files and history are kept.' });
+  if (!yes) return;
+  try {
+    await api('DELETE', `/api/servers/${enc(s.id)}`);
+    if (done) done();
+    delete state.info[s.id]; delete state.dbs[s.id]; delete state.conn[s.id];
+    await loadServers();
+    toast(`${s.name} removed.`, 'ok');
+    if (state.route.sid === s.id) go('#/'); else route();
+  } catch (e) { toastError(e, 'Not removed'); }
+}
+
+/** Right-click on a server in the sidebar: Edit / Remove. */
+function serverContextMenu(e, s) {
+  e.preventDefault();
+  menu(e.currentTarget, [
+    { icon: 'edit', label: 'Edit server', action: () => serverModal(s) },
+    '-',
+    { icon: 'trash', label: 'Remove server', danger: true, action: () => removeServer(s) },
+  ]);
+}
+
 /** Settings field: "Export…" and "Import…" for the saved servers. */
 function serversField(closeSettings) {
   const file = el('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
