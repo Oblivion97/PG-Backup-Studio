@@ -143,6 +143,52 @@ def test_close_question():
     assert "1 backup/restore job is still running" in q and "2 query tabs have an open transaction" in q
 
 
+def test_webview_failure_is_noticed_once():
+    import logging
+    desktop = pytest.importorskip("desktop")
+    calls = []
+    watch = desktop.WebViewFailure(lambda: calls.append(1))
+    logger = logging.getLogger("pywebview-test")
+    logger.addHandler(watch)
+    try:
+        logger.error("something unrelated")
+        assert calls == [] and not watch.failed
+        for _ in range(2):
+            logger.error("WebView2 initialization failed with exception:\n (0x8007139F): ...")
+        assert calls == [1] and watch.failed
+    finally:
+        logger.removeHandler(watch)
+
+
+def test_browser_fallback_opens_launch_url_and_asks_before_quitting(monkeypatch):
+    desktop = pytest.importorskip("desktop")
+    import webbrowser
+    opened, boxes = [], []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    answers = iter([1, 7, 1, desktop.IDYES])   # OK, "No, don't quit", OK, "Yes, quit"
+    monkeypatch.setattr(desktop, "message_box", lambda text, flags: boxes.append(text) or next(answers))
+
+    class M:
+        def list_jobs(self): return [{"status": "running"}]
+
+    class C:
+        def open_transactions(self): return 0
+
+    desktop.run_in_browser("http://127.0.0.1:5000/launch/abc", M(), C())
+    assert opened == ["http://127.0.0.1:5000/launch/abc"]
+    assert len(boxes) == 4 and "http://127.0.0.1:5000" in boxes[0] and "/launch/" not in boxes[0]
+    assert "still running" in boxes[1]
+
+
+def test_pick_folder_in_browser_fallback_says_type_the_path(tmp_path):
+    desktop = pytest.importorskip("desktop")
+    bridge = desktop.Bridge()
+    bridge.in_browser = True
+    _, c = client_for(tmp_path, desktop=bridge)
+    r = c.post("/api/pick-folder", json={}, headers=H)
+    assert r.status_code == 400 and "type the path" in r.get_json()["error"]
+
+
 def test_open_transactions_counts_nothing_without_sessions():
     assert ConsoleManager().open_transactions() == 0
 

@@ -54,6 +54,9 @@ Backup files are never deleted.
 - Its own window. One copy runs at a time.
 - Settings → **Default backup folder** has a **Browse…** button. The folder is checked to be writable when saved.
 - It asks before closing while a backup is running or a query tab has an open transaction.
+- If Microsoft Edge WebView2 cannot start (the window would stay blank), the app opens in your default browser
+  instead. A small "PG Backup Studio" box stays open; click **OK** in it to quit. In this mode **Browse…** for
+  folders is not available, so type the path.
 
 ## Where your data is kept
 
