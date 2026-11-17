@@ -400,6 +400,7 @@ details.adv > div { margin-top: 12px; }
 <script src="ws/backup.js"></script>
 <script src="ws/servers.js"></script>
 <script src="ws/admin.js"></script>
+<script src="ws/transfer.js"></script>
 <script>
 'use strict';
 
@@ -799,7 +800,7 @@ function go(hash) { if (location.hash === hash) route(); else location.hash = ha
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map((p) => { try { return decodeURIComponent(p); } catch (e) { return p; } });
   if (parts[0] === 's' && parts[1]) {
-    const tab = ['databases', 'backup', 'restore', 'query', 'admin'].includes(parts[2]) ? parts[2] : 'databases';
+    const tab = ['databases', 'backup', 'restore', 'query', 'transfer', 'admin'].includes(parts[2]) ? parts[2] : 'databases';
     return { view: tab, sid: parts[1], db: parts[3] || null };
   }
   if (parts[0] === 'activity') return { view: 'activity', job: parts[1] || null };
@@ -828,7 +829,7 @@ function route() {
   $('content').scrollTop = 0;
   $('content').classList.toggle('ws', r.view === 'query');
   if (r.view !== 'query' && typeof wsCloseAc === 'function') wsCloseAc();
-  ({ query: viewQuery, home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, admin: viewAdmin, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
+  ({ query: viewQuery, home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, transfer: viewTransfer, admin: viewAdmin, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
 }
 
 function renderHeader() {
@@ -849,10 +850,11 @@ function renderHeader() {
     tabLink('backup', 'Backup', 'backup', base && base + '/backup' + (r.view === 'backup' && r.db ? '/' + enc(r.db) : '')),
     tabLink('restore', 'Restore', 'restore', base && base + '/restore'),
     tabLink('query', 'Query', 'code', base && base + '/query' + (r.view === 'query' && r.db ? '/' + enc(r.db) : '')),
+    tabLink('transfer', 'Transfer', 'swap', base && base + '/transfer'),
     tabLink('admin', 'Admin', 'shield', base && base + '/admin'),
     tabLink('activity', 'Activity', 'activity', '#/activity', n),
     tabLink('history', 'History', 'history', '#/history'));
-  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', query: 'SQL workspace', admin: 'Server admin', activity: 'Activity', history: 'History' };
+  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', query: 'SQL workspace', transfer: 'Transfer a table', admin: 'Server admin', activity: 'Activity', history: 'History' };
   if (s) {
     clear(crumbs, icon('server'), el('b', { text: s.name }), el('span', { class: 'mono', text: `${s.user}@${s.host}:${s.port}` }),
       info ? el('span', { class: 'badge', text: 'PostgreSQL ' + info.version.split(' ')[0] }) : null,
@@ -1912,17 +1914,18 @@ async function pollJobs() {
     if (before.get(j.id) === 'running' && j.status !== 'running') announce(j);
   }
   renderSideLinks();
-  if (['activity', 'databases', 'backup', 'restore', 'history'].includes(state.route.view)) renderHeader();
+  if (['activity', 'databases', 'backup', 'restore', 'transfer', 'history'].includes(state.route.view)) renderHeader();
   if (state.route.view === 'activity') drawActivity();
   if (runningJobs().length) jobsTimer = setTimeout(pollJobs, document.hidden ? 5000 : 2000);
   scheduleDetail(0);
 }
 function announce(j) {
-  const what = j.kind === 'backup' ? 'Backup' : 'Restore';
+  const what = kindName(j.kind);
   const res = j.result || {};
   if (j.status === 'success') {
     const msg = j.kind === 'backup' && res.mode === 'functions' ? `${fmt.plural(res.objects, 'function file')} in ${fmt.basename(res.file)}`
       : j.kind === 'backup' ? `${fmt.basename(res.file)} · ${fmt.bytes(res.size)}${res.partial ? ' · partial' : ''}`
+      : j.kind === 'transfer' ? `${fmt.num(res.rows_written)} rows → ${res.target}`
       : `${fmt.num(res.objects)} objects, ${fmt.num(res.rows)} rows${j.error_count ? `, ${fmt.plural(j.error_count, 'error')}` : ''}`;
     toast(msg, j.error_count ? 'warn' : 'ok', `${what} of ${j.database} finished`);
   } else if (j.status === 'cancelled') toast(`${what} of ${j.database} was cancelled.`, 'warn');
@@ -2032,12 +2035,12 @@ function jobCard(j) {
   ];
   const head = el('div', { class: 'job-h', onclick: toggle, role: 'button', tabindex: '0', 'aria-expanded': open ? 'true' : 'false',
     onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } },
-    el('div', { class: 'job-ic ' + snap.kind }, icon(snap.kind === 'backup' ? 'backup' : 'restore')),
-    el('div', { style: 'min-width: 0' }, el('div', { class: 'job-title' }, el('span', { class: 'n', text: `${snap.kind === 'backup' ? 'Backup' : 'Restore'} · ${snap.database}` }), statusBadge(snap.status, snap)),
+    el('div', { class: 'job-ic ' + snap.kind }, icon(kindIcon(snap.kind))),
+    el('div', { style: 'min-width: 0' }, el('div', { class: 'job-title' }, el('span', { class: 'n', text: `${kindName(snap.kind)} · ${snap.kind === 'transfer' && snap.transfer ? snap.transfer.target.table + ' @ ' : ''}${snap.database}` }), statusBadge(snap.status, snap)),
       el('div', { class: 'job-sub' }, sub)),
     el('div', { class: 'row' }, cancel, el('span', { class: 'btn sm ghost icon-only', style: open ? 'transform: rotate(90deg)' : '' }, icon('chevron'))));
   const line2 = running ? `${fmt.dur(snap.elapsed_s)} elapsed${snap.eta_s !== null && snap.eta_s !== undefined ? ` · about ${fmt.dur(snap.eta_s)} left` : ''}` : `took ${fmt.dur(snap.elapsed_s)}`;
-  const curText = p.current ? (snap.kind === 'backup' ? `${p.current.name}${p.current.est_rows ? ` · ${fmt.num(p.current.rows)} / ≈${fmt.num(p.current.est_rows)} rows` : p.current.rows ? ` · ${fmt.num(p.current.rows)} rows` : ''}` : `${p.current.kind || ''} ${p.current.name || ''}`.trim()) : '';
+  const curText = p.current ? (snap.kind !== 'restore' ? `${p.current.name}${p.current.est_rows ? ` · ${fmt.num(p.current.rows)} / ≈${fmt.num(p.current.est_rows)} rows` : p.current.rows ? ` · ${fmt.num(p.current.rows)} rows` : ''}` : `${p.current.kind || ''} ${p.current.name || ''}`.trim()) : '';
   const prog = el('div', { class: 'job-prog' },
     el('div', { class: 'bar ' + barCls + (running && (pct === null || pct === undefined) ? ' indet' : '') }, el('i', { style: `width: ${pct === null || pct === undefined ? 0 : Math.min(100, pct)}%` })),
     el('div', { class: 'line' }, el('span', { text: running && curText ? curText : snap.status === 'failed' && snap.error ? snap.error : (snap.file ? fmt.basename(snap.file) : '') , style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;' + (snap.status === 'failed' ? 'color: var(--danger)' : '') }),
@@ -2049,7 +2052,7 @@ function jobCard(j) {
 
 function jobBody(j, d) {
   const p = j.progress || {};
-  const items = j.kind === 'backup' && j.mode === 'functions' ? [
+  const items = j.kind === 'transfer' ? trJobItems(j) : j.kind === 'backup' && j.mode === 'functions' ? [
     ['Functions', `${fmt.num(p.objects_done)} / ${fmt.num(p.objects_total)}`],
     ['Written', fmt.bytes(p.bytes_written)],
     ['Elapsed', fmt.dur(j.elapsed_s)],
@@ -2073,7 +2076,7 @@ function jobBody(j, d) {
   if (j.file) body.appendChild(el('div', { class: 'row', style: 'gap: 8px' }, icon('file'), el('span', { class: 'mono', text: j.file, style: 'word-break: break-all' })));
   if (j.history_error) body.appendChild(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: j.history_error })));
   const res = j.result;
-  if (res && j.status !== 'running') body.appendChild(resultBlock(j, res));
+  if (res && j.status !== 'running') body.appendChild(j.kind === 'transfer' ? trResult(j, res) : resultBlock(j, res));
   else if (j.status === 'failed' && j.error) body.appendChild(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'The job failed' }), j.error)));
   const lines = d ? d.log : [];
   body.appendChild(el('div', null, el('div', { class: 'section-title', text: `Log${lines.length ? ` (last ${lines.length} lines)` : ''}` }),
@@ -2122,7 +2125,8 @@ function resultBlock(j, res) {
 
 async function cancelJob(j) {
   const yes = await confirmBox({ title: `Cancel this ${j.kind}?`, confirmLabel: `Cancel ${j.kind}`, danger: true,
-    message: j.kind === 'backup' ? 'The job stops at the next object or COPY chunk. The unfinished .part file is deleted.'
+    message: j.kind === 'transfer' ? 'The copy stops at the next chunk and the target transaction is rolled back: nothing is changed there.'
+      : j.kind === 'backup' ? 'The job stops at the next object or COPY chunk. The unfinished .part file is deleted.'
       : 'The job stops at the next statement or COPY chunk. Objects restored so far stay in the target database (unless single transaction was chosen).' });
   if (!yes) return;
   try {
@@ -2146,7 +2150,7 @@ function drawHistory(view) {
   const all = state.history || [];
   const f = state.histFilter;
   const q = el('input', { class: 'input', placeholder: 'Search database, server or file', value: f.q, 'data-filter': '1', 'aria-label': 'Search history' });
-  const kindSeg = el('div', { class: 'seg' }, [['all', 'All'], ['backup', 'Backups'], ['restore', 'Restores']].map(([k, label]) =>
+  const kindSeg = el('div', { class: 'seg' }, [['all', 'All'], ['backup', 'Backups'], ['restore', 'Restores'], ['transfer', 'Transfers']].map(([k, label]) =>
     el('button', { type: 'button', class: f.kind === k ? 'on' : '', onclick: () => { f.kind = k; drawHistory(view); } }, label)));
   const statusSel = el('select', { class: 'input', style: 'width: 160px', 'aria-label': 'Status', onchange: (e) => { f.status = e.target.value; drawHistory(view); } },
     [['all', 'Any status'], ['success', 'Succeeded'], ['failed', 'Failed'], ['cancelled', 'Cancelled'], ['interrupted', 'Interrupted'], ['running', 'Running']].map(([k, l]) => el('option', { value: k, selected: f.status === k }, l)));
@@ -2201,11 +2205,11 @@ function historyRow(h) {
     if (has(h.rows)) counts.push(`${fmt.num(h.rows)} rows`);
   }
   return el('tr', null,
-    el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'job-ic ' + h.kind, style: 'width: 28px; height: 28px; border-radius: 7px' }, icon(isBackup ? 'backup' : 'restore')),
+    el('td', null, el('div', { class: 'cell-name' }, el('span', { class: 'job-ic ' + h.kind, style: 'width: 28px; height: 28px; border-radius: 7px' }, icon(kindIcon(h.kind))),
       el('div', { style: 'min-width: 0' }, el('div', { class: 'row', style: 'gap: 6px' }, el('span', { class: 'n', text: h.database }),
         h.partial ? el('span', { class: 'badge warn', title: (h.partial_tables || []).map((t) => t.table).join(', '), text: 'Partial' }) : null,
         h.gzip ? el('span', { class: 'badge', text: 'gzip' }) : null),
-        el('div', { class: 'subtle', style: 'font-weight: 400', text: isBackup ? `Backup${h.mode && h.mode !== 'full' ? ` · ${MODE_LABEL[h.mode] || h.mode}` : ''}` : `Restore${h.target_mode ? ` · ${{ create: 'new database', existing: 'existing database', recreate: 'recreated' }[h.target_mode] || h.target_mode}` : ''}` })))),
+        el('div', { class: 'subtle', style: 'font-weight: 400', text: h.kind === 'transfer' ? trHistoryText(h) : isBackup ? `Backup${h.mode && h.mode !== 'full' ? ` · ${MODE_LABEL[h.mode] || h.mode}` : ''}` : `Restore${h.target_mode ? ` · ${{ create: 'new database', existing: 'existing database', recreate: 'recreated' }[h.target_mode] || h.target_mode}` : ''}` })))),
     el('td', { class: 'nowrap', title: h.started }, el('div', { text: fmt.date(h.started) }), el('div', { class: 'subtle', text: fmt.ago(h.started) })),
     el('td', { text: (h.server && h.server.name) || '' }),
     el('td', { class: 'mono', style: 'max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap', title: h.file || '', text: fmt.basename(h.file) || '—' }),
@@ -2236,7 +2240,7 @@ async function openFolder(h) {
 async function deleteHistory(h) {
   const cb = el('input', { type: 'checkbox' });
   const yes = await confirmBox({ title: 'Delete this history entry?', confirmLabel: 'Delete', danger: true,
-    message: `${h.kind === 'backup' ? 'Backup' : 'Restore'} of ${h.database} from ${fmt.date(h.started)}.`,
+    message: `${kindName(h.kind)} of ${h.database} from ${fmt.date(h.started)}.`,
     extra: h.kind === 'backup' && h.file ? el('label', { class: 'check' }, cb, el('span', null, el('span', { class: 't', text: h.mode === 'functions' ? 'Also delete the function files and their folder' : 'Also delete the backup file' }),
       el('span', { class: 'd mono', text: h.file }))) : null });
   if (!yes) return;

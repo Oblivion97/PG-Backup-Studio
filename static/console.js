@@ -1251,6 +1251,8 @@ function wsResults(tab) {
     wrap.appendChild(el('div', { class: 'ws-status' },
       el('span', { text: `${fmt.num(cur.row_count)} row${cur.row_count === 1 ? '' : 's'}${cur.truncated ? ` (first ${fmt.num(cur.row_count)}; raise the row limit to see more)` : ''}` }),
       el('span', { text: `${cur.duration_ms} ms` }), el('span', { text: cur.status }), el('span', { class: 'grow' }),
+      typeof trFromQuery === 'function' && cur.statement ? el('button', { class: 'btn sm ghost', type: 'button', title: 'Copy all the rows of this query into a table in another database',
+        onclick: () => trFromQuery(tab.sid, tab.db, cur.statement) }, icon('swap'), 'Transfer rows…') : null,
       el('span', { text: tab.ranAt ? tab.ranAt.toLocaleTimeString() : '' })));
   } else if (cur && cur.error) {
     wrap.appendChild(wsMessages(tab, [cur]));

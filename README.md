@@ -94,6 +94,19 @@ address to open. Data is kept in `~/.config/PG Backup Studio`.
   PC, never saved), set attributes, connection limit and password expiry, grant and revoke roles (with admin option),
   rename and drop. Every change shows its SQL first and runs in one transaction.
 
+**Table transfer** (the **Transfer** tab of a server)
+- Copy the rows of one table (or view) into a table in another database, on any saved server, the same one included.
+- Or copy the result of a query (joins, WITH, GROUP BY …) instead of a table. In the SQL workspace, **Transfer rows…**
+  under a result opens this with the query filled in.
+- **Compare** the two tables first. If the columns match exactly, it is a direct transfer. If they differ, pick the
+  source column for each target column (same names are matched for you; empty columns get their default). If the
+  target table does not exist, it is created from the source (and so is the schema). You can type a new schema and
+  table name.
+- Rows already in the target: add to them, skip the ones whose key already exists, or delete them first.
+- Optional row filter (a SQL condition, run read-only on the source).
+- The SQL is shown before it starts. Everything on the target runs in one transaction: if anything fails or you
+  cancel, nothing there changes. Progress is in Activity, the result in History.
+
 **SQL workspace**
 - Query tabs with syntax highlighting, suggestions (tables, columns, aliases, functions), a formatter and history.
 - Auto-commit or manual transactions, with Commit, Rollback and Cancel.

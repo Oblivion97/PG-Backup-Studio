@@ -20,7 +20,7 @@ import time
 from collections import deque
 from datetime import datetime
 
-from engine import backup, db, restore
+from engine import backup, db, restore, transfer
 from engine.backup import BackupOptions
 from engine.restore import RestoreOptions
 from engine.util import BackupBlockedError, Cancelled, EngineError, check_cancel
@@ -40,7 +40,8 @@ CANCELLED_BY_CLOSE = "Cancelled: the app was closed"
 TARGET_MODES = ("existing", "create", "recreate")
 _PHASE_TEXT = {"preparing": "Preparing the target database", "connecting": "Connecting to the server", "catalog": "Reading the catalog",
                "write": "Writing the backup file", "restore": "Running the backup file",
-               "saving": "Saving the result"}
+               "saving": "Saving the result", "copy": "Copying rows",
+               "finishing": "Finishing: keys, sequences and commit"}
 
 
 class JobError(Exception):
@@ -63,6 +64,8 @@ class Job:
                  target: dict | None = None):
         self.id, self.kind, self.database, self.options, self.target = job_id, kind, dbname, options, target
         self._server = server
+        self._source_server: dict | None = None            # transfer: where the rows come from
+        self.uses = [(server["id"], dbname)]                 # (server id, database) this job reads or writes
         self.server_ref = {"id": server["id"], "name": server.get("name")}
         self.source = path
         self.status, self.phase = "running", "starting"
@@ -97,7 +100,7 @@ class Job:
         if name == self.phase:
             return
         self.phase = name
-        if name in ("write", "restore") and self.t_work is None:
+        if name in ("write", "restore", "copy") and self.t_work is None:
             self.t_work = time.monotonic()
         if name in _PHASE_TEXT:
             self.add_log("info", _PHASE_TEXT[name])
@@ -105,6 +108,8 @@ class Job:
     # -------------------------------------------------- progress formulas (ARCHITECTURE 10.6)
 
     def fraction(self) -> float:
+        if self.kind == "transfer":
+            return min(self.cur_rows / self.est_rows, 0.99) if self.est_rows > 0 else 0.0
         if self.kind == "restore":
             return self.position / self.file_size if self.file_size > 0 else 0.0
         if not self.totals_seen:
@@ -148,6 +153,10 @@ class Job:
                             "data_bytes_done": self.data_done + min(self.cur_bytes, self.cur_size),
                             "data_bytes_total": self.data_total, "bytes_written": self.bytes_written,
                             "current": current}
+            elif self.kind == "transfer":
+                progress = {"rows": self.cur_rows, "est_rows": self.est_rows,
+                            "current": None if self.cur_name is None else
+                            {"name": self.cur_name, "rows": self.cur_rows, "est_rows": self.cur_est}}
             else:
                 progress = {"file_size": self.file_size, "position": self.position,
                             "objects_done": self.objects_done, "rows": self.rows_done,
@@ -156,11 +165,20 @@ class Job:
                    "cancel_requested": self.cancel_requested, "server": dict(self.server_ref),
                    "database": self.database, "started": self.started_wall.isoformat(timespec="seconds"),
                    "elapsed_s": round(end - self.t0, 1), "percent": percent, "eta_s": eta,
-                   "file": self.file if self.kind == "backup" else self.source, "progress": progress,
+                   "file": self.file if self.kind == "backup" else None if self.kind == "transfer" else self.source,
+                   "progress": progress,
                    "error_count": self.error_count, "warning_count": self.warning_count,
                    "log_seq": self.log_seq, "result": copy.deepcopy(self.result), "error": self.error,
                    "history_id": self.id, "history_error": self.history_error,
-                   "mode": self.options.mode if self.kind == "backup" else None}
+                   "mode": self.options.mode if self.kind == "backup" else
+                   self.options.existing if self.kind == "transfer" else None}
+            if self.kind == "transfer":
+                o = self.options
+                out["transfer"] = {"source": {"server": (self._source_server or {}).get("name"), "database": o.src_db,
+                                              "table": o.source_table, "where": o.where,
+                                              "query": o.query},
+                                   "target": {"server": self.server_ref["name"], "database": o.tgt_db,
+                                              "table": f"{o.tgt_schema}.{o.tgt_table}", "created": o.create}}
             if with_log:
                 out["log"] = [dict(x) for x in self.log if log_after is None or x["seq"] > log_after]
             return out
@@ -169,9 +187,10 @@ class Job:
 class JobManager:
     """Starts, tracks and cancels jobs; see the module docstring."""
 
-    def __init__(self, store: Store, *, backup_fn=None, restore_fn=None, prepare_fn=None, keep_finished: int = 50,
-                 max_running: int = 4):
+    def __init__(self, store: Store, *, backup_fn=None, restore_fn=None, prepare_fn=None, transfer_fn=None,
+                 keep_finished: int = 50, max_running: int = 4):
         self.store = store
+        self._transfer_fn = transfer_fn
         self._backup_fn = backup_fn
         self._restore_fn = restore_fn
         self._prepare_fn = prepare_fn
@@ -245,6 +264,25 @@ class JobManager:
                                 "partial": False})
         return self._launch(job)
 
+    def start_transfer(self, server_id: str, target_server_id: str, spec, *, password: str | None = None,
+                       target_password: str | None = None) -> str:
+        """Copy a table's rows into a table of another database (decision 013). `spec`: see engine.transfer."""
+        source = self._server(server_id, password)
+        target = self._server(target_server_id, target_password) if target_server_id != server_id else dict(source)
+        if not isinstance(spec, transfer.Spec):
+            try:
+                spec = transfer.parse_spec(spec, same_server=target_server_id == server_id)
+            except EngineError as e:
+                raise JobError(str(e)) from e
+        job = self._register("transfer", target, spec.tgt_db, spec, source_server=source)
+        self._add_history(job, {"file": None, "size": None, "mode": spec.existing,
+                                "source": {"server": {"id": source["id"], "name": source.get("name")},
+                                           "database": spec.src_db, "table": spec.source_table,
+                                           "where": spec.where, "query": (spec.query or "")[:4000] or None},
+                                "table": f"{spec.tgt_schema}.{spec.tgt_table}", "created": spec.create,
+                                "partial": False})
+        return self._launch(job)
+
     @staticmethod
     def _clean_target(server: dict, dbname: str, target) -> dict:
         if target is None:
@@ -278,10 +316,10 @@ class JobManager:
         removing the server must wait for them)."""
         with self._lock:
             return [j.id for j in self._jobs.values()
-                    if j.status == "running" and j._server["id"] == server_id and dbname in (None, j.database)]
+                    if j.status == "running" and any(s == server_id and dbname in (None, d) for s, d in j.uses)]
 
     def _register(self, kind: str, server: dict, dbname: str, opts, path: str | None = None,
-                  target: dict | None = None) -> Job:
+                  target: dict | None = None, source_server: dict | None = None) -> Job:
         with self._lock:
             if self._closed:
                 raise JobError("The app is closing; no new jobs can start.", "busy")
@@ -295,6 +333,9 @@ class JobManager:
                 raise JobError(f"{dbname} is in use by another job; wait for it to finish before recreating it.",
                                "conflict")
             job = Job(new_id(set(self._jobs)), kind, server, dbname, opts, path, target)
+            if source_server is not None:
+                job._source_server = source_server
+                job.uses.append((source_server["id"], opts.src_db))
             self._jobs[job.id] = job
             self._prune()
             return job
@@ -334,6 +375,11 @@ class JobManager:
                     job.set_phase("connecting")
                 fn = self._backup_fn or backup.run_backup
                 res = fn(job._server, job.database, job.options, progress=self._tracker(job), cancel=job.cancel_event)
+                outcome = {"status": "success", "result": res}
+            elif job.kind == "transfer":
+                fn = self._transfer_fn or transfer.run_transfer
+                res = fn(job._source_server, job._server, job.options, progress=self._tracker(job),
+                         cancel=job.cancel_event)
                 outcome = {"status": "success", "result": res}
             else:
                 (self._prepare_fn or self._prepare_target)(job)
@@ -403,6 +449,10 @@ class JobManager:
                 job.rows_done = res.get("rows", job.rows_done)
             if status == "success" and job.kind == "backup":
                 job.file = res.get("file", job.file)
+            if job.kind == "transfer" and status == "failed":
+                job.error_count = max(job.error_count, 1)
+            if job.kind == "transfer" and res:
+                job.cur_rows = res.get("rows_read", job.cur_rows)
             job.part_file = None
             error_count, warning_count = job.error_count, job.warning_count
         changes = self._history_fields(job, status, outcome.get("error"), res, duration, error_count, warning_count)
@@ -433,7 +483,13 @@ class JobManager:
         out = {"status": status, "duration_s": duration, "error": error, "error_count": error_count,
                "warning_count": warning_count, "part_file": None}
         res = res or {}
-        if job.kind == "backup":
+        if job.kind == "transfer":
+            if status == "success":
+                out.update(rows=res.get("rows_written"), rows_read=res.get("rows_read"),
+                           rows_skipped=res.get("rows_skipped"), sequences=res.get("sequences") or [])
+            elif error:
+                out["errors"] = [{"object": None, "sqlstate": None, "message": error, "line": None}]
+        elif job.kind == "backup":
             if status == "success":
                 out.update(file=res.get("file"), size=res.get("size"), objects=res.get("objects"),
                            tables=res.get("tables"), rows=res.get("rows"), partial=bool(res.get("partial")),
@@ -454,6 +510,9 @@ class JobManager:
         res = res or {}
         if status in ("cancelled", "failed"):
             return error or status.capitalize()
+        if job.kind == "transfer":
+            skipped = f", {res['rows_skipped']:,} already there" if res.get("rows_skipped") else ""
+            return f"Transfer finished: {res.get('rows_written', 0):,} rows{skipped} → {res.get('target')}"
         if job.kind == "backup" and res.get("mode") == "functions":
             renamed = f" ({res['renamed']:,} numbered because the name repeats)" if res.get("renamed") else ""
             return f"Functions backed up: {res.get('objects', 0):,} files{renamed} → {res.get('file')}"
@@ -489,7 +548,10 @@ class JobManager:
             if not job.cancel_requested:
                 job.set_phase("saving" if d.get("name") == "done" else d.get("name") or job.phase)
         elif event == "totals":
-            if job.kind == "backup":
+            if job.kind == "transfer":
+                job.est_rows = d.get("est_rows", 0)
+                job.add_log("info", f"About {job.est_rows:,} rows to copy" if job.est_rows else "Row count not known")
+            elif job.kind == "backup":
                 job.totals_seen = True
                 job.objects_total, job.tables_total = d.get("objects", 0), d.get("tables", 0)
                 job.est_rows, job.data_total = d.get("est_rows", 0), d.get("data_bytes", 0)
