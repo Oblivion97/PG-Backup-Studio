@@ -55,6 +55,14 @@ password prompt), then **New database** or **Existing database**; "Drop and recr
 Existing (still asks to type the name). The API already took any `server_id`. `static/index.html` is about 146.3 of
 150 KiB.
 
+**Fixed 2026-11-17 (user report), v0.9.2:** the installed app showed a blank window on a PC where Edge WebView2
+cannot start (`0x8007139F` in `desktop.log`; a minimal pywebview window fails the same way there, Teams' WebView2
+works). `desktop.py` now watches the `pywebview` logger for "WebView2 initialization failed" (pywebview has no
+failure callback), closes the blank window, opens the same `/launch/<token>` URL in the default browser and keeps
+running behind a "click OK to quit" box (asks first when work is running); Browse… says to type the path. Tests in
+`tests/test_step9_desktop.py`. Installer `PG Backup Studio Setup 0.9.2.exe` built 2026-11-17 and includes the
+"not released" items above; not yet published on GitHub.
+
 **Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
 "Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.
 
