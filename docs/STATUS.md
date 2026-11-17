@@ -93,6 +93,12 @@ aarch64, built on Rocky Linux 8 (glibc 2.28) and install-tested on 16 distributi
 `.github/workflows/build-mac-linux.yml` when a release is published; Windows still via `build_desktop.bat`.
 `desktop.py --selftest` checks a build. Single instance + reopen on macOS / Linux via app.lock / app.sock.
 
+**Added 2026-11-17 (user request, approved after trying it), v0.12.0:** Transfer tab
+(decision 013): copy a table's rows into a table of another database on any saved server; compare → direct
+(identical columns) / column mapping (different) / create table (missing); add, skip existing or delete first;
+optional read-only row filter; or a query's result as the source (SQL workspace → Transfer rows…); SQL review; one target transaction; a `transfer` job in Activity and History.
+Code `engine/transfer.py`, `static/transfer.js`; tests `tests/test_transfer.py` (21, need PostgreSQL).
+
 **Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
 "Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.
 

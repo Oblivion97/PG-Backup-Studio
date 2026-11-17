@@ -23,7 +23,7 @@ from flask import Flask, g, jsonify, redirect, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 import jobs
-from engine import admin, catalog, db, explore
+from engine import admin, catalog, db, explore, transfer
 from engine.console import ConsoleError, ConsoleManager
 from engine.precheck import run_precheck
 from engine.util import EngineError
@@ -32,9 +32,9 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.11.0"
+APP_VERSION = "0.12.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js")   # served at /ws/<name>, nothing else
+WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js", "transfer.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 GUARD_HEADER = "X-PGBS"
 TOKEN_COOKIE = "pgbs_launch"
@@ -443,6 +443,43 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
     @app.delete("/api/servers/<sid>/admin/roles/<path:name>")
     def admin_role_drop(sid, name):
         return admin.drop_role(server_for(sid), name, confirm=body().get("confirm"))
+
+    # ------------------------------------------------------------ table transfer (decision 013)
+
+    def transfer_ends(sid: str, data: dict) -> tuple[dict, dict, str]:
+        """(source server, target server, target server id) with the passwords to use."""
+        target = data.get("target")
+        if not isinstance(target, dict) or not isinstance(target.get("server_id"), str) or not target["server_id"]:
+            raise ApiError("Choose the target server.")
+        tsid = target["server_id"]
+        tgt = server_for(tsid) if tsid != sid else None
+        src = server_for(sid)
+        return src, tgt or src, tsid
+
+    @app.post("/api/servers/<sid>/transfer/compare")
+    def transfer_compare(sid):
+        data = body()
+        src, tgt, _ = transfer_ends(sid, data)
+        s, t = data.get("source"), data["target"]
+        if not isinstance(s, dict):
+            raise ApiError("Choose the source table.")
+        return transfer.compare(src, s.get("database"), s.get("schema"), s.get("table"),
+                                tgt, t.get("database"), t.get("schema"), t.get("table"), query=s.get("query"))
+
+    @app.post("/api/servers/<sid>/transfer/preview")
+    def transfer_preview(sid):
+        data = body()
+        src, tgt, tsid = transfer_ends(sid, data)
+        return transfer.preview(src, tgt, transfer.parse_spec(data, same_server=tsid == sid))
+
+    @app.post("/api/servers/<sid>/transfer")
+    def transfer_start(sid):
+        data = body()
+        src, tgt, tsid = transfer_ends(sid, data)
+        spec = transfer.parse_spec(data, same_server=tsid == sid)
+        job_id = manager.start_transfer(sid, tsid, spec, password=src.get("password"),
+                                        target_password=tgt.get("password"))
+        return {"job_id": job_id}, 202
 
     @app.get("/api/servers/<sid>/templates")
     def templates_list(sid):

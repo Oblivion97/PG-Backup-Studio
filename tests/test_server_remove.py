@@ -10,6 +10,7 @@ H = {"X-PGBS": "1"}
 class _Job:
     def __init__(self, sid, db, status="running"):
         self.id, self.status, self.database, self._server = f"j-{sid}-{db}", status, db, {"id": sid}
+        self.uses = [(sid, db)]
 
 
 def setup(tmp_path):
