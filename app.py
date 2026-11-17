@@ -32,7 +32,7 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.11.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
@@ -114,6 +114,20 @@ def check_output_folder(path: str) -> str:
     except OSError as e:
         raise ApiError(f"Backups cannot be written to {folder}: {e.strerror or e}.") from e
     return folder
+
+
+def close_question(manager, consoles) -> str | None:
+    """Why stopping the app needs a confirmation (running jobs, open transactions), or None."""
+    running = [j for j in manager.list_jobs() if j["status"] == "running"]
+    open_tx = consoles.open_transactions()
+    parts = []
+    if running:
+        parts.append(f"{len(running)} backup/restore job{'s are' if len(running) > 1 else ' is'} still running "
+                     "and will be cancelled.")
+    if open_tx:
+        parts.append(f"{open_tx} query tab{'s have' if open_tx > 1 else ' has'} an open transaction that will be "
+                     "rolled back.")
+    return " ".join(parts) or None
 
 
 def create_app(store: Store | None = None, manager: JobManager | None = None,
@@ -256,7 +270,21 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
     @app.get("/api/app")
     def app_info():
         return {"version": APP_VERSION, "warnings": list(store.warnings), "desktop": desktop is not None,
-                "data_dir": str(store.dir)}
+                "data_dir": str(store.dir), "can_quit": bool(getattr(desktop, "can_quit", False))}
+
+    @app.post("/api/app/quit")
+    def app_quit():
+        """Browser mode of the desktop app on macOS / Linux (no window, no tray): the page's Quit button.
+
+        {force?: bool} → {confirm: reason} while a job runs or a query tab has an open transaction, else stops.
+        """
+        if not getattr(desktop, "can_quit", False):
+            raise ApiError("Quit is only offered when the desktop app runs in the browser.", "invalid")
+        reason = close_question(manager, consoles)
+        if reason and body().get("force") is not True:
+            return {"confirm": reason}
+        desktop.request_quit()
+        return {"quitting": True}
 
     # ------------------------------------------------------------ desktop helpers (Step 9)
 

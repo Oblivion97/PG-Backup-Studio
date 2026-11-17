@@ -35,10 +35,19 @@ def test_data_folder_is_app_data_only_when_frozen(monkeypatch, tmp_path):
     monkeypatch.delattr(sys, "frozen", raising=False)
     assert store_mod.default_data_dir() == store_mod.APP_DIR / "data"
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setenv("APPDATA", str(tmp_path))
-    assert store_mod.default_data_dir() == tmp_path / APP_NAME
-    monkeypatch.delenv("PGBS_DATA_DIR", raising=False)
-    assert Store().dir == (tmp_path / APP_NAME).resolve()
+    real = sys.platform
+    monkeypatch.setattr(sys, "platform", "darwin")      # macOS: ~/Library/Application Support
+    assert store_mod.default_data_dir() == Path.home() / "Library" / "Application Support" / APP_NAME
+    monkeypatch.setattr(sys, "platform", "linux")       # Linux: $XDG_CONFIG_HOME, else ~/.config
+    monkeypatch.delenv("APPDATA", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert store_mod.default_data_dir() == tmp_path / "xdg" / APP_NAME
+    monkeypatch.setattr(sys, "platform", real)
+    monkeypatch.setenv("APPDATA", str(tmp_path))         # Windows: %APPDATA%
+    if real != "darwin":
+        assert store_mod.default_data_dir() == tmp_path / APP_NAME
+        monkeypatch.delenv("PGBS_DATA_DIR", raising=False)
+        assert Store().dir == (tmp_path / APP_NAME).resolve()
 
 
 def test_import_copies_valid_files_only(tmp_path):
@@ -174,16 +183,76 @@ def test_browser_fallback_opens_launch_url_and_runs_the_tray(monkeypatch):
     import webbrowser
     opened, trays = [], []
     monkeypatch.setattr(webbrowser, "open", opened.append)
-    monkeypatch.setattr(desktop, "listen_for_second_launch", lambda open_browser: None)
+    monkeypatch.setattr(desktop, "listen_for_second_launch", lambda open_browser, data_dir=None: None)
 
     def fake_tray(open_browser, may_quit):   # the tray's "Open" reopens the same launch URL
         trays.append(may_quit)
         open_browser()
 
     monkeypatch.setattr(desktop, "run_tray", fake_tray)
+    monkeypatch.setattr(desktop, "TRAY", True)   # the Windows behaviour, on any platform
     desktop.run_in_browser("http://127.0.0.1:5000/launch/abc", _Jobs("done"), _Consoles())
     assert opened == ["http://127.0.0.1:5000/launch/abc"] * 2
     assert len(trays) == 1 and trays[0]() is True   # nothing running: Quit needs no question
+
+
+def test_browser_mode_without_tray_runs_until_the_page_quits(monkeypatch):
+    """macOS / Linux: no tray icon; the page's Quit button (bridge.request_quit) ends run_in_browser."""
+    desktop = pytest.importorskip("desktop")
+    import threading
+    import webbrowser
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(desktop, "listen_for_second_launch", lambda on_open, data_dir=None: None)
+    monkeypatch.setattr(desktop, "TRAY", False)
+    bridge = desktop.Bridge()
+    bridge.in_browser = True
+    assert bridge.can_quit
+    threading.Timer(0.2, bridge.request_quit).start()
+    t = threading.Thread(target=desktop.run_in_browser, args=("http://127.0.0.1:5000/launch/abc", _Jobs("done"), _Consoles(), bridge))
+    t.start()
+    t.join(5)
+    assert not t.is_alive() and opened == ["http://127.0.0.1:5000/launch/abc"]
+
+
+def test_page_quit_api_asks_while_work_is_running(tmp_path, monkeypatch):
+    desktop = pytest.importorskip("desktop")
+    monkeypatch.setattr(desktop, "TRAY", False)
+    bridge = desktop.Bridge()
+    st, c = client_for(tmp_path, desktop=bridge, launch_token=None)
+    assert c.get("/api/app", headers=H).get_json()["can_quit"] is False
+    assert c.post("/api/app/quit", json={}, headers=H).status_code == 400   # window mode: no page Quit
+    bridge.in_browser = True
+    assert c.get("/api/app", headers=H).get_json()["can_quit"] is True
+    manager = c.application.config["PGBS_MANAGER"]
+    monkeypatch.setattr(manager, "list_jobs", lambda: [{"status": "running"}])
+    r = c.post("/api/app/quit", json={}, headers=H).get_json()
+    assert "still running" in r["confirm"] and not bridge.quit_event.is_set()
+    assert c.post("/api/app/quit", json={"force": True}, headers=H).get_json() == {"quitting": True}
+    assert bridge.quit_event.wait(3)
+    _, plain = client_for(tmp_path / "b")
+    assert plain.get("/api/app", headers=H).get_json()["can_quit"] is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="lock file and socket are the macOS / Linux mechanism")
+def test_posix_single_instance_and_second_launch(tmp_path):
+    desktop = pytest.importorskip("desktop")
+    import threading
+    first = desktop.single_instance(str(tmp_path))
+    assert first is not None and desktop.single_instance(str(tmp_path)) is None
+    assert desktop.signal_running_instance(str(tmp_path)) is False   # nobody listening yet
+    got = threading.Event()
+    desktop.listen_for_second_launch(got.set, str(tmp_path))
+    assert desktop.signal_running_instance(str(tmp_path)) is True and got.wait(3)
+    first.close()
+    again = desktop.single_instance(str(tmp_path))
+    assert again is not None
+    again.close()
+
+
+def test_selftest_passes():
+    desktop = pytest.importorskip("desktop")
+    assert desktop.selftest() == 0
 
 
 def test_tray_quit_asks_while_work_is_running(monkeypatch):

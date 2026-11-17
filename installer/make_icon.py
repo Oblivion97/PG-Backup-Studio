@@ -1,4 +1,4 @@
-"""Draw the app icon (blue tile, white database cylinder) and write installer/app.ico.
+"""Draw the app icon (blue tile, white database cylinder): installer/app.ico, or with --png installer/icons/*.png.
 
 Pure Python (zlib only), so building needs no image library. The .ico holds PNG images at 16-256 px.
 Run: python installer/make_icon.py
@@ -48,17 +48,17 @@ def _sample(x: float, y: float):
     return color
 
 
-def render(size: int) -> bytes:
+def render(size: int, ss: int = SS) -> bytes:
     rows = []
-    n = SS * SS
+    n = ss * ss
     for py in range(size):
         row = bytearray([0])   # PNG filter: none
         for px in range(size):
             acc = [0, 0, 0]
             hits = 0
-            for sy in range(SS):
-                for sx in range(SS):
-                    c = _sample((px + (sx + 0.5) / SS) / size, (py + (sy + 0.5) / SS) / size)
+            for sy in range(ss):
+                for sx in range(ss):
+                    c = _sample((px + (sx + 0.5) / ss) / size, (py + (sy + 0.5) / ss) / size)
                     if c is not None:
                         hits += 1
                         for i in range(3):
@@ -89,7 +89,27 @@ def write_ico(path: Path) -> None:
     path.write_bytes(out)
 
 
+PNG_SIZES = (16, 32, 48, 64, 128, 256, 512, 1024)   # macOS .iconset (via iconutil) and Linux hicolor icons
+
+
+def write_pngs(folder: Path) -> list[Path]:
+    """installer/icons/app-<size>.png; big sizes with less supersampling (pure Python is slow, edges stay smooth)."""
+    folder.mkdir(exist_ok=True)
+    out = []
+    for s in PNG_SIZES:
+        path = folder / f"app-{s}.png"
+        path.write_bytes(render(s, SS if s <= 256 else 2 if s <= 512 else 1))
+        out.append(path)
+    return out
+
+
 if __name__ == "__main__":
-    target = Path(__file__).resolve().parent / "app.ico"
-    write_ico(target)
-    print(f"wrote {target} ({target.stat().st_size} bytes)")
+    import sys
+    here = Path(__file__).resolve().parent
+    if "--png" in sys.argv:          # macOS / Linux builds
+        for p in write_pngs(here / "icons"):
+            print(f"wrote {p}")
+    else:                            # Windows build
+        target = here / "app.ico"
+        write_ico(target)
+        print(f"wrote {target} ({target.stat().st_size} bytes)")
