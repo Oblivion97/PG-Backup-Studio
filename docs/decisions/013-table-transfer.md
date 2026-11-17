@@ -1,6 +1,6 @@
 # 013 — Table transfer: copy one table's rows into another database
 
-_Date: 2026-11-17 · Status: **built on branch `table-transfer`, waiting for the user to try it** ("select a table to
+_Date: 2026-11-17 · Status: **approved by the user 2026-11-17** after trying it; released in v0.12.0 ("select a table to
 transfer to a new db that is connected to studio; if the schema matches exactly suggest direct transfer, if not the
 user gives a schema, the app asks to map the columns, then confirm the transfer")._
 
