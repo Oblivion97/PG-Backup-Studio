@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import re
+import secrets
 import threading
 import time
 
@@ -14,6 +15,14 @@ from engine.db import DbActionError
 from conftest import PREFIX, connect, pg_settings
 
 H = {"X-PGBS": "1"}
+
+
+def _pw() -> str:
+    """A fresh random password per run for the throwaway pgbs_test_ roles (no fixed secrets in the code)."""
+    return "T-" + secrets.token_urlsafe(18)
+
+
+PW_USER, PW_NEW, PW_SESS, PW_PLAIN, PW_API, PW_UNIT = (_pw() for _ in range(6))
 
 
 # ---------------------------------------------------------------- unit: SCRAM, SQL building
@@ -39,7 +48,7 @@ def as_text(stmts):
 
 
 def test_build_create_user_with_memberships_masks_password():
-    stmts = admin.build_create({"name": "alice", "login": True, "password": "pw", "createdb": True, "connlimit": 5,
+    stmts = admin.build_create({"name": "alice", "login": True, "password": PW_UNIT, "createdb": True, "connlimit": 5,
                                 "valid_until": "2030-01-31", "member_of": ["readers", {"name": "writers", "admin": True}]},
                                mask=True)
     text = " ".join(as_text(stmts))
@@ -47,8 +56,8 @@ def test_build_create_user_with_memberships_masks_password():
     assert "CREATE ROLE" in text and "'alice'" in text and "LOGIN" in text and "CREATEDB" in text and "INHERIT" in text
     assert "CONNECTION LIMIT" in text and "2030-01-31" in text and "***" in text and "SCRAM" not in text
     assert "WITH ADMIN OPTION" in text and "'writers'" in text and "'readers'" in text
-    real = " ".join(as_text(admin.build_create({"name": "alice", "login": True, "password": "pw"})))
-    assert "SCRAM-SHA-256$4096:" in real and "'pw'" not in real
+    real = " ".join(as_text(admin.build_create({"name": "alice", "login": True, "password": PW_UNIT})))
+    assert "SCRAM-SHA-256$4096:" in real and PW_UNIT not in real
 
 
 def test_build_alter_diffs_memberships_and_renames_last():
@@ -119,7 +128,7 @@ def test_create_user_login_alter_and_drop(pg_admin, clean_roles):
     srv = server()
     admin.create_role(srv, {"name": GROUP, "login": False})
     admin.create_role(srv, {"name": GROUP2, "login": False})
-    admin.create_role(srv, {"name": ROLE, "login": True, "password": "Secr3t-pass", "connlimit": 3,
+    admin.create_role(srv, {"name": ROLE, "login": True, "password": PW_USER, "connlimit": 3,
                             "member_of": [{"name": GROUP, "admin": True}], "comment": "made by the test"})
     roles = {r["name"]: r for r in admin.list_roles(srv)["roles"]}
     me = roles[ROLE]
@@ -129,24 +138,24 @@ def test_create_user_login_alter_and_drop(pg_admin, clean_roles):
     # the SCRAM verifier the app computed works for a real login; a wrong password does not
     s = pg_settings()
     import psycopg
-    with psycopg.connect(host=s["host"], port=s["port"], user=ROLE, password="Secr3t-pass", dbname="postgres") as c:
+    with psycopg.connect(host=s["host"], port=s["port"], user=ROLE, password=PW_USER, dbname="postgres") as c:
         assert c.execute("SELECT current_user").fetchone()[0] == ROLE
     with pytest.raises(psycopg.OperationalError):
         psycopg.connect(host=s["host"], port=s["port"], user=ROLE, password="wrong", dbname="postgres", connect_timeout=5)
     stored = pg_admin.execute("SELECT rolpassword FROM pg_authid WHERE rolname = %s", (ROLE,)).fetchone()[0]
     assert stored.startswith("SCRAM-SHA-256$4096:")
 
-    preview = admin.preview(srv, {"password": "x", "member_of": [GROUP2]}, ROLE)
+    preview = admin.preview(srv, {"password": PW_UNIT, "member_of": [GROUP2]}, ROLE)
     assert any("PASSWORD '***'" in p for p in preview) and any("REVOKE" in p for p in preview)
 
-    admin.alter_role(srv, ROLE, {"password": "N3w-pass", "member_of": [{"name": GROUP2, "admin": False}],
+    admin.alter_role(srv, ROLE, {"password": PW_NEW, "member_of": [{"name": GROUP2, "admin": False}],
                                  "valid_until": "2099-12-31", "new_name": ROLE + "_renamed", "comment": ""})
     roles = {r["name"]: r for r in admin.list_roles(srv)["roles"]}
     assert ROLE not in roles
     r2 = roles[ROLE + "_renamed"]
     assert r2["member_of"] == [{"name": GROUP2, "admin": False}] and r2["valid_until"].startswith("2099-12-31")
     assert r2["comment"] is None
-    with psycopg.connect(host=s["host"], port=s["port"], user=ROLE + "_renamed", password="N3w-pass", dbname="postgres"):
+    with psycopg.connect(host=s["host"], port=s["port"], user=ROLE + "_renamed", password=PW_NEW, dbname="postgres"):
         pass
 
     with pytest.raises(DbActionError, match="exactly"):
@@ -187,10 +196,10 @@ def test_drop_role_that_owns_objects_explains(pg_admin, clean_roles):
 
 def test_sessions_list_cancel_and_terminate(pg_admin, clean_roles):
     srv = server()
-    admin.create_role(srv, {"name": ROLE, "login": True, "password": "Sess-pass1"})
+    admin.create_role(srv, {"name": ROLE, "login": True, "password": PW_SESS})
     s = pg_settings()
     import psycopg
-    victim = psycopg.connect(host=s["host"], port=s["port"], user=ROLE, password="Sess-pass1", dbname="postgres",
+    victim = psycopg.connect(host=s["host"], port=s["port"], user=ROLE, password=PW_SESS, dbname="postgres",
                              autocommit=True, application_name="pgbs-test-victim")
     pid = victim.info.backend_pid
     try:
@@ -232,8 +241,8 @@ def test_sessions_list_cancel_and_terminate(pg_admin, clean_roles):
 
 def test_non_admin_login_is_refused(pg_admin, clean_roles):
     srv = server()
-    admin.create_role(srv, {"name": ROLE, "login": True, "password": "Plain-pass1"})
-    plain = dict(srv, user=ROLE, password="Plain-pass1")
+    admin.create_role(srv, {"name": ROLE, "login": True, "password": PW_PLAIN})
+    plain = dict(srv, user=ROLE, password=PW_PLAIN)
     caps = admin.capabilities(plain)
     assert not caps["can_manage_roles"] and not caps["can_end_others"]
     assert all(not r["can_manage"] for r in admin.list_roles(plain)["roles"])
@@ -264,9 +273,9 @@ def test_api_routes(pg_admin, clean_roles, tmp_path):
     base = f"/api/servers/{sid}/admin"
     assert c.get(base + "/capabilities", headers=H).get_json()["superuser"] is True
     assert c.get(base + "/sessions", headers=H).status_code == 200
-    r = c.post(base + "/roles/preview", json={"spec": {"name": ROLE, "login": True, "password": "p"}}, headers=H)
+    r = c.post(base + "/roles/preview", json={"spec": {"name": ROLE, "login": True, "password": PW_UNIT}}, headers=H)
     assert r.status_code == 200 and "PASSWORD '***'" in r.get_json()["sql"][0]
-    assert c.post(base + "/roles", json={"name": ROLE, "login": True, "password": "Api-pass1"}, headers=H).status_code == 201
+    assert c.post(base + "/roles", json={"name": ROLE, "login": True, "password": PW_API}, headers=H).status_code == 201
     assert c.post(base + "/roles", json={"name": ROLE}, headers=H).status_code == 409
     assert c.patch(f"{base}/roles/{ROLE}", json={"createdb": True}, headers=H).get_json()["statements"] == 1
     assert c.delete(f"{base}/roles/{ROLE}", json={"confirm": "x"}, headers=H).status_code == 400
