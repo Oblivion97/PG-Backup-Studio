@@ -6,7 +6,8 @@ carry. Closing the window asks first when a backup / restore is running or a que
 transaction, then stops the jobs, closes every database connection and quits. One instance at a time.
 
 If WebView2 cannot start (the window would stay blank), the window is closed and the same launch URL opens in the
-default browser; a small message box keeps the app running until the user clicks OK to quit.
+default browser; a tray icon (Open / Quit) keeps the app running until Quit is chosen there, even if the tab is
+closed. Launching the app again then reopens the tab.
 
 Run from source with `python desktop.py`; the installed app is this file frozen by PyInstaller
 (`pg_backup_studio.spec`), which keeps its data in %APPDATA%\\PG Backup Studio (store.default_data_dir).
@@ -115,26 +116,120 @@ def message_box(text: str, flags: int) -> int:
     return 1
 
 
-MB_OK_INFO, MB_YESNO_WARN, IDYES = 0x40, 0x34, 6
+MB_YESNO_WARN, IDYES = 0x34, 6
+OPEN_EVENT_NAME = "Local\\PGBackupStudio.OpenInBrowser"   # a second launch sets it: the running app reopens the tab
+
+
+def quit_allowed(manager, consoles) -> bool:
+    """Tray → Quit: fine when nothing is running, otherwise ask (like closing the window)."""
+    reason = close_question(manager, consoles)
+    return not reason or message_box(f"Quit {APP_NAME}?\n\n{reason}", MB_YESNO_WARN) == IDYES
+
+
+def signal_running_instance() -> bool:
+    """Second launch: ask the app already running in browser mode to reopen its tab. False when it isn't in that mode."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenEventW(0x0002, False, OPEN_EVENT_NAME)   # EVENT_MODIFY_STATE
+    if not handle:
+        return False
+    kernel32.SetEvent(handle)
+    kernel32.CloseHandle(handle)
+    return True
+
+
+def listen_for_second_launch(open_browser) -> None:
+    """Browser mode: reopen the tab whenever another launch (Start menu, desktop icon) signals the open event."""
+    if os.name != "nt":
+        return
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateEventW(None, False, False, OPEN_EVENT_NAME)   # auto-reset; held for the life of the app
+
+    def wait():
+        while kernel32.WaitForSingleObject(handle, 0xFFFFFFFF) == 0:   # INFINITE → WAIT_OBJECT_0
+            open_browser()
+
+    threading.Thread(target=wait, name="second-launch", daemon=True).start()
+
+
+def tray_icon_image():
+    """The app icon for the tray: the exe's own icon when installed, installer/app.ico from source."""
+    from System.Drawing import Icon, Size, SystemIcons
+    try:
+        if getattr(sys, "frozen", False):
+            return Icon.ExtractAssociatedIcon(sys.executable)
+        ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "installer", "app.ico")
+        if os.path.exists(ico):
+            return Icon(ico, Size(16, 16))
+    except Exception:
+        log.exception("could not load the tray icon image")
+    return SystemIcons.Application
+
+
+def run_tray(open_browser, may_quit) -> None:
+    """Notification-area icon (WinForms NotifyIcon through pythonnet, which pywebview already loads).
+
+    Click: open the app in the browser. Right-click: Open / Quit. Blocks until Quit is chosen and allowed; closing
+    the browser tab does not stop the app.
+    """
+    import clr
+    clr.AddReference("System.Windows.Forms")
+    clr.AddReference("System.Drawing")
+    from System.Drawing import Font, FontStyle
+    from System.Windows.Forms import (Application, ContextMenuStrip, MouseButtons, NotifyIcon, ToolStripMenuItem,
+                                      ToolStripSeparator)
+
+    icon = NotifyIcon()
+    icon.Icon = tray_icon_image()
+    icon.Text = f"{APP_NAME} (running in your browser)"   # Windows allows up to 63 characters
+
+    def on_click(sender, args):
+        if args.Button == MouseButtons.Left:
+            open_browser()
+
+    def on_quit(sender, args):
+        if may_quit():
+            icon.Visible = False
+            Application.ExitThread()
+
+    open_item = ToolStripMenuItem(f"Open {APP_NAME}")
+    open_item.Font = Font(open_item.Font, FontStyle.Bold)
+    open_item.Click += lambda sender, args: open_browser()
+    quit_item = ToolStripMenuItem("Quit")
+    quit_item.Click += on_quit
+    menu = ContextMenuStrip()
+    menu.Items.Add(open_item)
+    menu.Items.Add(ToolStripSeparator())
+    menu.Items.Add(quit_item)
+    icon.ContextMenuStrip = menu
+    icon.MouseClick += on_click
+    icon.Visible = True
+    try:
+        Application.Run()
+    finally:
+        icon.Visible = False
+        icon.Dispose()
 
 
 def run_in_browser(url: str, manager, consoles) -> None:
-    """Browser fallback: open the app in the default browser and keep the server up until the user quits.
+    """Browser fallback: open the app in the default browser and keep the server up until Quit in the tray icon.
 
-    The launch URL sets the per-launch secret cookie in that browser, exactly as it would in the window.
+    The launch URL sets the per-launch secret cookie in that browser, exactly as it would in the window; it is used
+    for every reopen too, so the app still works after the browser has been closed and its session cookie is gone.
     """
     import webbrowser
-    log.warning("window could not start; opening the app in the default browser instead")
-    webbrowser.open(url)
-    home = url.split("/launch/")[0]
-    while True:
-        message_box(f"{APP_NAME} could not open its own window because Microsoft Edge WebView2 failed to start, "
-                    f"so it has opened in your web browser instead.\n\n"
-                    f"Address (works in that browser): {home}\n\n"
-                    f"Leave this box open while you work. Click OK to quit {APP_NAME}.", MB_OK_INFO)
-        reason = close_question(manager, consoles)
-        if not reason or message_box(f"Quit {APP_NAME}?\n\n{reason}", MB_YESNO_WARN) == IDYES:
-            return
+    log.warning("window could not start; running in the default browser with a tray icon instead")
+
+    def open_browser():
+        webbrowser.open(url)
+
+    open_browser()
+    listen_for_second_launch(open_browser)
+    run_tray(open_browser, lambda: quit_allowed(manager, consoles))
+    log.info("quit from the tray icon")
 
 
 def close_question(manager, consoles) -> str | None:
@@ -154,7 +249,8 @@ def close_question(manager, consoles) -> str | None:
 def main() -> int:
     mutex = single_instance()
     if mutex is None:
-        already_running_message()
+        if not signal_running_instance():   # running in the browser: it reopens its tab; in a window: say so
+            already_running_message()
         return 0
     store = Store()
     setup_logging(str(store.dir))
@@ -168,6 +264,8 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, name="flask", daemon=True).start()
     log.info("%s %s on 127.0.0.1:%s, data in %s", APP_NAME, web.APP_VERSION, port, store.dir)
 
+    # downloads (server export, grid CSV/JSON/... exports) get a Save dialog; pywebview cancels them by default
+    webview.settings["ALLOW_DOWNLOADS"] = True
     url = f"http://127.0.0.1:{port}/launch/{token}"
     window = webview.create_window(APP_NAME, url, width=WINDOW_SIZE[0],
                                    height=WINDOW_SIZE[1], min_size=MIN_SIZE, text_select=True, zoomable=True,

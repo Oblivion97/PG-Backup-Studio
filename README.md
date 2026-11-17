@@ -41,6 +41,10 @@ Backup files are never deleted.
 - Add a server by pasting a connection link (`postgresql://user:password@host:5432/db?sslmode=require`, a JDBC
   URL, or `host=… port=… dbname=…`); host, port, user, password, database and SSL mode are filled in.
 - Create, rename, clone and drop databases; see and end connections. System databases are protected.
+- Move servers to another PC: Settings → **Servers → Export…** saves the chosen servers to a `.json` file
+  (passwords only if you tick **Include saved passwords**; they are then in the file as plain text). On the other
+  PC, Settings → **Servers → Import…** adds them. Servers already saved there are skipped, and a name that is
+  already taken gets " (2)" added.
 
 **SQL workspace**
 - Query tabs with syntax highlighting, suggestions (tables, columns, aliases, functions), a formatter and history.
@@ -55,7 +59,9 @@ Backup files are never deleted.
 - Settings → **Default backup folder** has a **Browse…** button. The folder is checked to be writable when saved.
 - It asks before closing while a backup is running or a query tab has an open transaction.
 - If Microsoft Edge WebView2 cannot start (the window would stay blank), the app opens in your default browser
-  instead. A small "PG Backup Studio" box stays open; click **OK** in it to quit. In this mode **Browse…** for
+  instead, with a PG Backup Studio icon in the notification area (by the clock; Windows may tuck it under **^**).
+  Click the icon to open the app in the browser again; right-click → **Quit** to stop it. Closing the browser tab
+  does not stop the app, and starting it again from the Start menu reopens the tab. In this mode **Browse…** for
   folders is not available, so type the path.
 
 ## Where your data is kept

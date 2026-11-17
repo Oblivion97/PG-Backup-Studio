@@ -32,9 +32,9 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.9.2"
+APP_VERSION = "0.9.3"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js")   # served at /ws/<name>, nothing else
+WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 GUARD_HEADER = "X-PGBS"
 TOKEN_COOKIE = "pgbs_launch"
@@ -293,6 +293,20 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
         rec = store.save_server(data)
         passwords.forget(rec["id"])
         return jsonify(public(rec)), 200 if data.get("id") else 201
+
+    @app.post("/api/servers/export")
+    def servers_export():
+        """A server file for another PC: {ids?: [...], include_passwords?: bool} → the document to save."""
+        data = body()
+        include = data.get("include_passwords", False)
+        if not isinstance(include, bool):
+            raise ApiError("'include_passwords' must be true or false.")
+        return store.export_servers(data.get("ids"), include_passwords=include)
+
+    @app.post("/api/servers/import")
+    def servers_import():
+        """Add the servers of a file made by /api/servers/export: {document: {...}} → {added, skipped}."""
+        return store.import_servers(body().get("document"))
 
     @app.delete("/api/servers/<sid>")
     def servers_delete(sid):

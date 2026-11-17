@@ -61,7 +61,19 @@ works). `desktop.py` now watches the `pywebview` logger for "WebView2 initializa
 failure callback), closes the blank window, opens the same `/launch/<token>` URL in the default browser and keeps
 running behind a "click OK to quit" box (asks first when work is running); Browse… says to type the path. Tests in
 `tests/test_step9_desktop.py`. Installer `PG Backup Studio Setup 0.9.2.exe` built 2026-11-17 and includes the
-"not released" items above; not yet published on GitHub.
+"not released" items above; released as v0.9.2 on GitHub (2026-11-17).
+
+**Changed / added 2026-11-17 (user requests), v0.9.3:** (1) browser mode no longer shows a "click OK to quit" box:
+a tray icon (WinForms `NotifyIcon` through pythonnet, no new dependency) opens the app in the browser on click and
+has Open / Quit; only Quit stops the app (asks first while work is running), closing the tab does not; a second
+launch sets the named event `Local\PGBackupStudio.OpenInBrowser` and the running app reopens its tab
+(`run_tray`, `listen_for_second_launch`, `signal_running_instance` in `desktop.py`). (2) Settings → Servers →
+Export… / Import…: a `.json` file of chosen servers (format `pg-backup-studio/servers`, version 1; passwords only
+when ticked), imported on another PC with the Add-server checks, skipping servers already saved (same host, port,
+user, maintenance database) and renaming name clashes to "<name> (2)" (`Store.export_servers` /
+`import_servers`, `POST /api/servers/export|import`, `static/servers.js`). (3) The desktop window now allows
+downloads (`webview.settings["ALLOW_DOWNLOADS"]`), so server export and the grid's CSV/JSON/… exports get a Save
+dialog instead of being cancelled. Tests: `tests/test_server_export.py`, `tests/test_step9_desktop.py`.
 
 **Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
 "Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.

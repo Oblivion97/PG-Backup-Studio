@@ -40,6 +40,7 @@ REPLACE_RETRY_DELAY = 0.05
 SERVERS, SETTINGS, HISTORY, PROFILES = "servers.json", "settings.json", "history.json", "backup_profiles.json"
 _CONTAINERS = {SERVERS: ("servers", list), SETTINGS: ("settings", dict), HISTORY: ("entries", list),
                PROFILES: ("profiles", dict)}
+SERVERS_EXPORT_FORMAT = "pg-backup-studio/servers"   # the "format" of a server export file (export_servers)
 _SERVER_FIELDS = ("name", "host", "port", "user", "password", "remember_password", "sslmode", "maintenance_db")
 
 _dir_locks: dict[str, threading.RLock] = {}
@@ -326,6 +327,75 @@ class Store:
             if profiles["profiles"].pop(server_id, None) is not None:
                 self._write(PROFILES, profiles)
             return True
+
+    # ------------------------------------------------------------ server export / import (a file to move to another PC)
+
+    def export_servers(self, ids: list[str] | None = None, *, include_passwords: bool = False) -> dict:
+        """The servers (all, or those in `ids`) as a portable document: no ids or dates, passwords only when asked."""
+        if ids is not None and (not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)):
+            raise StoreError("'ids' must be a list of server ids.")
+        with self.lock:
+            servers = self._servers(self._read(SERVERS))
+        if ids is not None:
+            missing = set(ids) - {s["id"] for s in servers}
+            if missing:
+                raise StoreError("A selected server no longer exists; reload and try again.", "not_found")
+            servers = [s for s in servers if s["id"] in ids]
+        if not servers:
+            raise StoreError("There are no servers to export.")
+        out = []
+        for s in servers:
+            rec = {k: s.get(k) for k in _SERVER_FIELDS if k != "password"}
+            if include_passwords and s.get("password"):
+                rec["password"] = s["password"]
+            out.append(rec)
+        return {"format": SERVERS_EXPORT_FORMAT, "version": 1, "exported_at": now_iso(), "servers": out}
+
+    def import_servers(self, doc) -> dict:
+        """Add the servers of an `export_servers` document. Checked like Add server; nothing is written on an error.
+
+        A server already saved with the same host, port, user and maintenance database is skipped; one whose name is
+        taken by a different server is added as "<name> (2)" etc. Returns {"added": [names], "skipped": [names]}.
+        """
+        if not isinstance(doc, dict) or doc.get("format") != SERVERS_EXPORT_FORMAT or not isinstance(doc.get("servers"), list):
+            raise StoreError("This is not a PG Backup Studio server export file.")
+        if not isinstance(doc.get("version"), int) or doc["version"] > 1:
+            raise StoreError("This server file was made by a newer version of PG Backup Studio; update the app first.")
+
+        def same(a: dict, b: dict) -> bool:
+            return (str(a.get("host", "")).strip().casefold(), a.get("port"), a.get("user"), a.get("maintenance_db")) == \
+                   (str(b.get("host", "")).strip().casefold(), b.get("port"), b.get("user"), b.get("maintenance_db"))
+
+        with self.lock:
+            file = self._read(SERVERS)
+            servers = self._servers(file)
+            added, skipped, stamp = [], [], now_iso()
+            for i, item in enumerate(doc["servers"], 1):
+                if not isinstance(item, dict):
+                    raise StoreError(f"Server {i} in the file is not valid.")
+                data = {k: item[k] for k in _SERVER_FIELDS if k in item}
+                if "password" in data and "remember_password" not in data:
+                    data["remember_password"] = True
+                base = str(data.get("name") or "").strip() or f"Server {i}"
+                data["name"], n = base, 1
+                try:
+                    rec = self._clean_server(data, None, [])   # every field checked; names handled below
+                except StoreError as e:
+                    raise StoreError(f"Server {base!r} in the file: {e}") from None
+                if any(same(rec, s) for s in servers):
+                    skipped.append(base)
+                    continue
+                taken = {str(s.get("name", "")).strip().casefold() for s in servers}
+                while rec["name"].casefold() in taken:
+                    n += 1
+                    rec["name"] = f"{base} ({n})"
+                rec.update(id=new_id({s["id"] for s in servers}), created_at=stamp, updated_at=stamp)
+                servers.append(rec)
+                file["servers"].append(rec)
+                added.append(rec["name"])
+            if added:
+                self._write(SERVERS, file)
+        return {"added": added, "skipped": skipped}
 
     # ------------------------------------------------------------ import
 

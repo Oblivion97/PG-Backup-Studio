@@ -160,24 +160,45 @@ def test_webview_failure_is_noticed_once():
         logger.removeHandler(watch)
 
 
-def test_browser_fallback_opens_launch_url_and_asks_before_quitting(monkeypatch):
+class _Jobs:
+    def __init__(self, status): self.status = status
+    def list_jobs(self): return [{"status": self.status}]
+
+
+class _Consoles:
+    def open_transactions(self): return 0
+
+
+def test_browser_fallback_opens_launch_url_and_runs_the_tray(monkeypatch):
     desktop = pytest.importorskip("desktop")
     import webbrowser
-    opened, boxes = [], []
+    opened, trays = [], []
     monkeypatch.setattr(webbrowser, "open", opened.append)
-    answers = iter([1, 7, 1, desktop.IDYES])   # OK, "No, don't quit", OK, "Yes, quit"
+    monkeypatch.setattr(desktop, "listen_for_second_launch", lambda open_browser: None)
+
+    def fake_tray(open_browser, may_quit):   # the tray's "Open" reopens the same launch URL
+        trays.append(may_quit)
+        open_browser()
+
+    monkeypatch.setattr(desktop, "run_tray", fake_tray)
+    desktop.run_in_browser("http://127.0.0.1:5000/launch/abc", _Jobs("done"), _Consoles())
+    assert opened == ["http://127.0.0.1:5000/launch/abc"] * 2
+    assert len(trays) == 1 and trays[0]() is True   # nothing running: Quit needs no question
+
+
+def test_tray_quit_asks_while_work_is_running(monkeypatch):
+    desktop = pytest.importorskip("desktop")
+    boxes, answers = [], iter([7, desktop.IDYES])   # "No", then "Yes"
     monkeypatch.setattr(desktop, "message_box", lambda text, flags: boxes.append(text) or next(answers))
+    assert desktop.quit_allowed(_Jobs("running"), _Consoles()) is False
+    assert desktop.quit_allowed(_Jobs("running"), _Consoles()) is True
+    assert len(boxes) == 2 and "still running" in boxes[0]
+    assert desktop.quit_allowed(_Jobs("done"), _Consoles()) is True and len(boxes) == 2
 
-    class M:
-        def list_jobs(self): return [{"status": "running"}]
 
-    class C:
-        def open_transactions(self): return 0
-
-    desktop.run_in_browser("http://127.0.0.1:5000/launch/abc", M(), C())
-    assert opened == ["http://127.0.0.1:5000/launch/abc"]
-    assert len(boxes) == 4 and "http://127.0.0.1:5000" in boxes[0] and "/launch/" not in boxes[0]
-    assert "still running" in boxes[1]
+def test_second_launch_finds_no_browser_mode_app():
+    desktop = pytest.importorskip("desktop")
+    assert desktop.signal_running_instance() is False   # nothing listening: the "already open" message is shown
 
 
 def test_pick_folder_in_browser_fallback_says_type_the_path(tmp_path):

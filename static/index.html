@@ -398,6 +398,7 @@ details.adv > div { margin-top: 12px; }
 <script src="ws/console.js"></script>
 <script src="ws/explorer.js"></script>
 <script src="ws/backup.js"></script>
+<script src="ws/servers.js"></script>
 <script>
 'use strict';
 
@@ -1058,6 +1059,7 @@ async function settingsModal() {
         el('div', { class: 'field' }, el('label', null, 'Large table: estimated rows'), f.rows),
         el('div', { class: 'field' }, el('label', null, 'History entries kept'), f.hist, el('div', { class: 'hint', text: 'Between 50 and 100,000. Files are never deleted by trimming.' })),
         el('div', { class: 'field' }, el('label', null, 'Appearance'), themeSeg)),
+      serversField(() => m.close()),
       dataField(() => m.close()),
     ],
     actions: [cancel, save] });
