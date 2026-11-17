@@ -5,6 +5,7 @@ of the suite is scanned for the passwords used here.
 """
 import os
 import threading
+import sys
 import time
 
 import psycopg
@@ -180,7 +181,9 @@ def test_jobs_history_and_open_folder(api, st, gate, tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod.subprocess, "Popen", lambda args, **k: calls.append(args))
     monkeypatch.setattr(app_mod.os, "startfile", lambda p: calls.append(["startfile", p]), raising=False)
     r = api.post("/api/history/aaaaaaaaaaaa/open-folder")
-    assert r.status_code == 200 and r.get_json()["opened"] == str(f) and str(f) in " ".join(calls[0])
+    # Windows / macOS select the file in the file manager; Linux (xdg-open) can only open its folder
+    shown = str(f) if sys.platform in ("win32", "darwin") else str(tmp_path)
+    assert r.status_code == 200 and r.get_json()["opened"] == str(f) and shown in " ".join(calls[0])
     f.unlink()
     assert api.post("/api/history/aaaaaaaaaaaa/open-folder").get_json()["opened"] == str(tmp_path)
     assert api.post("/api/history/nope/open-folder").status_code == 404

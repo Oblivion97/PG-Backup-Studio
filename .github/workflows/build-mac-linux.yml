@@ -61,7 +61,8 @@ jobs:
       - name: Build tools
         run: |
           dnf install -y -q dnf-plugins-core
-          dnf install -y -q git tar gzip xz findutils which file curl make gcc \
+          # --nobest: mirrors are sometimes briefly out of step (e.g. a new gcc before its libgcc)
+          dnf install -y -q --nobest git tar gzip xz findutils which file curl make gcc \
             openssl-devel bzip2-devel libffi-devel zlib-devel xz-devel sqlite-devel readline-devel \
             ncurses-devel gdbm-devel libuuid-devel
       - uses: actions/checkout@v4
