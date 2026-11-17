@@ -1,0 +1,150 @@
+# macOS and Linux builds (decision 012). Windows is built on Windows with build_desktop.bat.
+# - pull request: build, self-test and install-test everything; packages are kept as workflow artifacts
+# - release published (or run by hand with a tag): the same, then the packages are attached to that release
+name: macOS and Linux builds
+
+on:
+  pull_request:
+    paths: ["**.py", "static/**", "pg_backup_studio.spec", "requirements*.txt", "installer/**", ".github/workflows/build-mac-linux.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Attach the packages to this existing release tag (empty: build and test only)"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  PY_VERSION: "3.14.6"
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: python -m pip install -r requirements-desktop.txt
+      - name: Unit tests
+        run: python -m pytest -q -p no:cacheprovider tests/test_step9_desktop.py tests/test_step6_ui.py tests/test_step5_api.py tests/test_server_export.py tests/test_server_remove.py tests/test_admin.py tests/test_step3_store.py
+      - name: Build app and disk image (includes the self test)
+        run: PYTHON=python bash installer/macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  linux-build:
+    name: Linux ${{ matrix.arch }} (built on Rocky Linux 8, glibc 2.28)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    container: rockylinux:8
+    steps:
+      - name: Build tools
+        run: |
+          dnf install -y -q dnf-plugins-core
+          # --nobest: mirrors are sometimes briefly out of step (e.g. a new gcc before its libgcc)
+          dnf install -y -q --nobest git tar gzip xz findutils which file curl make gcc \
+            openssl-devel bzip2-devel libffi-devel zlib-devel xz-devel sqlite-devel readline-devel \
+            ncurses-devel gdbm-devel libuuid-devel
+      - uses: actions/checkout@v4
+      - name: Cache Python ${{ env.PY_VERSION }}
+        id: pycache
+        uses: actions/cache@v4
+        with:
+          path: /opt/python
+          key: python-${{ env.PY_VERSION }}-rocky8-${{ matrix.arch }}-shared-v1
+      - name: Build Python ${{ env.PY_VERSION }} (shared libpython, for PyInstaller)
+        if: steps.pycache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://www.python.org/ftp/python/$PY_VERSION/Python-$PY_VERSION.tgz" | tar -xz -C /tmp
+          cd /tmp/Python-$PY_VERSION
+          ./configure -q --prefix=/opt/python --enable-shared --with-ensurepip=install LDFLAGS="-Wl,-rpath,/opt/python/lib"
+          make -s -j"$(nproc)"
+          make -s install
+      - name: Install
+        run: |
+          /opt/python/bin/python3 -m pip install -q --upgrade pip
+          /opt/python/bin/python3 -m pip install -q -r requirements-desktop.txt
+      - name: Unit tests
+        run: /opt/python/bin/python3 -m pytest -q -p no:cacheprovider tests/test_step9_desktop.py tests/test_step6_ui.py tests/test_step5_api.py tests/test_server_export.py tests/test_server_remove.py tests/test_admin.py tests/test_step3_store.py
+      - name: Build app and packages (includes the self test)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: PYTHON=/opt/python/bin/python3 bash installer/linux/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/packages/*
+          if-no-files-found: error
+
+  linux-test:
+    name: ${{ matrix.image }} ${{ matrix.arch }}
+    needs: linux-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "ubuntu:20.04", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "ubuntu:22.04", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "ubuntu:24.04", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "debian:11", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "debian:12", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "fedora:latest", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "rockylinux:8", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "rockylinux:9", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "almalinux:9", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "opensuse/leap:15.6", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "opensuse/tumbleweed", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "archlinux:latest", arch: x86_64, runner: ubuntu-24.04 }
+          - { image: "ubuntu:24.04", arch: aarch64, runner: ubuntu-24.04-arm }
+          - { image: "debian:12", arch: aarch64, runner: ubuntu-24.04-arm }
+          - { image: "fedora:latest", arch: aarch64, runner: ubuntu-24.04-arm }
+          - { image: "rockylinux:9", arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: installer/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: packages
+      - name: Install and start on ${{ matrix.image }}
+        run: docker run --rm -v "$PWD:/w" -w /w "${{ matrix.image }}" sh installer/linux/smoke.sh packages
+
+  release:
+    name: Attach to the release
+    needs: [macos, linux-test]
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          ls -la out
+          gh release upload "$TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"

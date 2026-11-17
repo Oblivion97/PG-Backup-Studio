@@ -87,6 +87,12 @@ SCRAM passwords made in the app, memberships). Design: decision 011. Tests: `tes
 the user's local PostgreSQL 18.6) plus a headless-Edge run of the whole panel. Merged to main and released as
 v0.10.0.
 
+**Added 2026-11-17 (user request), v0.11.0:** macOS and Linux builds (decision 012): macOS `.dmg` per architecture
+with the native window; Linux in browser mode (page Quit button) as AppImage, .deb, .rpm and .tar.gz for x86_64 and
+aarch64, built on Rocky Linux 8 (glibc 2.28) and install-tested on 16 distribution images. Built and attached by
+`.github/workflows/build-mac-linux.yml` when a release is published; Windows still via `build_desktop.bat`.
+`desktop.py --selftest` checks a build. Single instance + reopen on macOS / Linux via app.lock / app.sock.
+
 **Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
 "Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.
 

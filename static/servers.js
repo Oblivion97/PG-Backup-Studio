@@ -4,6 +4,30 @@
  */
 'use strict';
 
+/** Desktop app in browser mode on macOS / Linux (no window, no tray icon): a Quit entry under Settings. */
+function setupQuit() {
+  if ($('side-quit')) return;
+  const b = el('button', { type: 'button', class: 'side-link', id: 'side-quit', title: 'Stop PG Backup Studio' }, icon('x'), 'Quit');
+  b.onclick = async () => {
+    try {
+      let r = await api('POST', '/api/app/quit', {});
+      if (r.confirm) {
+        if (!(await confirmBox({ title: 'Quit PG Backup Studio?', danger: true, confirmLabel: 'Quit', message: r.confirm }))) return;
+        r = await api('POST', '/api/app/quit', { force: true });
+      }
+      if (r.quitting) appStopped();
+    } catch (e) { toastError(e, 'Not stopped'); }
+  };
+  $('side-settings').after(b);
+}
+
+function appStopped() {
+  document.body.replaceChildren(el('div', { style: 'min-height: 100vh; display: grid; place-items: center; padding: 24px' },
+    el('div', { class: 'card', style: 'max-width: 440px; padding: 28px; text-align: center' },
+      el('h3', { style: 'margin: 0 0 8px', text: 'PG Backup Studio has stopped' }),
+      el('div', { class: 'subtle', text: 'You can close this tab. Start the app again from your applications menu.' }))));
+}
+
 /** Ask, then remove a saved server; `done` runs after it is gone (e.g. close the Edit dialog). */
 async function removeServer(s, done) {
   const yes = await confirmBox({ title: `Remove ${s.name}?`, danger: true, confirmLabel: 'Remove server',

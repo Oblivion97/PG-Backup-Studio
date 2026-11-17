@@ -1,16 +1,31 @@
 # PG Backup Studio
 
-A local Windows app for backing up, restoring and managing PostgreSQL databases, with a built-in SQL workspace.
-Backups are made from the system catalog by the app itself. No `pg_dump`, `psql` or other PostgreSQL tools
-are needed.
+A local app for Windows, macOS and Linux for backing up, restoring and managing PostgreSQL databases, with a
+built-in SQL workspace. Backups are made from the system catalog by the app itself. No `pg_dump`, `psql` or other
+PostgreSQL tools are needed.
 
 ## Download and install
 
-1. Download **`PG Backup Studio Setup <version>.exe`** from the
-   [Releases](https://github.com/Oblivion97/PG-Backup-Studio/releases) page.
-2. Run it. It installs for your Windows user without admin rights; choose "all users" in the first dialog if you
-   want that instead.
-3. Start **PG Backup Studio** from the Start menu (or the desktop icon if you ticked it).
+Everything is on the [Releases](https://github.com/Oblivion97/PG-Backup-Studio/releases) page. Python and the
+PostgreSQL driver come inside the app; nothing else is needed.
+
+| System | Download | |
+|---|---|---|
+| Windows 10 / 11 (64-bit) | `PG Backup Studio Setup <version>.exe` | its own window |
+| macOS 11+ Apple silicon (M1–M4) | `PG-Backup-Studio-<version>-macos-arm64.dmg` | its own window |
+| macOS 11+ Intel | `PG-Backup-Studio-<version>-macos-x86_64.dmg` | its own window |
+| Ubuntu, Debian, Linux Mint, Pop!_OS | `pg-backup-studio_<version>_amd64.deb` (`_arm64` for ARM) | opens in your browser |
+| Fedora, RHEL, Rocky, AlmaLinux, openSUSE | `pg-backup-studio-<version>.x86_64.rpm` (`.aarch64` for ARM) | opens in your browser |
+| Any Linux (Arch, Manjaro, …) | `PG-Backup-Studio-<version>-x86_64.AppImage` or `pg-backup-studio-<version>-linux-x86_64.tar.gz` | opens in your browser |
+
+Linux builds run on any distribution with glibc 2.28 or newer (2018 onwards: RHEL 8, Debian 10, Ubuntu 20.04, …),
+x86_64 or ARM64.
+
+### Windows
+
+1. Run the Setup. It installs for your Windows user without admin rights; choose "all users" in the first dialog if
+   you want that instead.
+2. Start **PG Backup Studio** from the Start menu (or the desktop icon if you ticked it).
 
 **Requirements:** Windows 10 or 11 (64-bit) with Microsoft Edge WebView2. WebView2 is part of Windows 11. If it is
 missing, the installer offers Microsoft's download page. Nothing else is needed: Python and the PostgreSQL driver
@@ -23,6 +38,29 @@ Click **More info → Run anyway**.
 
 **Uninstalling:** use Apps & features. It asks whether to delete your saved data (the default is to keep it).
 Backup files are never deleted.
+
+### macOS
+
+1. Open the `.dmg` for your Mac (Apple menu → About This Mac: "Apple M…" = arm64, "Intel" = x86_64) and drag
+   **PG Backup Studio** to **Applications**.
+2. The app is not notarized by Apple yet, so the first start is blocked. Right-click (or Control-click) the app in
+   Applications → **Open** → **Open**. On macOS 15 and later: try to open it once, then System Settings →
+   Privacy & Security → **Open Anyway**. Or in Terminal: `xattr -dr com.apple.quarantine "/Applications/PG Backup Studio.app"`.
+
+Data is kept in `~/Library/Application Support/PG Backup Studio`. Updating: replace the app in Applications.
+
+### Linux
+
+- **.deb:** `sudo apt install ./pg-backup-studio_<version>_amd64.deb`
+- **.rpm:** `sudo dnf install ./pg-backup-studio-<version>.x86_64.rpm` (openSUSE:
+  `sudo zypper install --allow-unsigned-rpm ./pg-backup-studio-<version>.x86_64.rpm`)
+- **AppImage:** `chmod +x PG-Backup-Studio-*.AppImage` and run it (no install, no FUSE needed).
+- **.tar.gz:** unpack anywhere and run `pg-backup-studio/pg-backup-studio`.
+
+Start it from your applications menu or with `pg-backup-studio`. It opens in your default web browser (no GTK or Qt
+needed). **Quit** is in the page's sidebar under Settings; closing the tab leaves it running, and starting it again
+reopens the tab. Started from a terminal, Ctrl+C stops it too; on a machine without a desktop browser it prints the
+address to open. Data is kept in `~/.config/PG Backup Studio`.
 
 ## Features
 

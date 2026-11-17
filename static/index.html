@@ -2258,6 +2258,7 @@ async function start() {
     state.version = info.version;
     state.desktop = !!info.desktop;
     state.dataDir = info.data_dir || '';
+    if (info.can_quit) setupQuit();
     for (const w of info.warnings || []) toast(w, 'warn', 'Data file problem');
     await loadServers();
   } catch (e) { toastError(e); }

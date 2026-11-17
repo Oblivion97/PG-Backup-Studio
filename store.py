@@ -73,6 +73,8 @@ def default_data_dir() -> Path:
     """Where the JSON files live: ./data when run from source; the user's app-data folder for the installed
     desktop app (PyInstaller sets sys.frozen), so reinstalling or updating never touches them (decision 010)."""
     if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / APP_NAME
         base = os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
         return Path(base) / APP_NAME
     return APP_DIR / "data"
