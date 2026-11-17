@@ -81,6 +81,12 @@ dialog's button renamed "Remove server" (shared `removeServer` / `serverContextM
 `DELETE /api/servers/<id>` now refuses (409) while a backup/restore runs on that server (`jobs_using(sid)` with any
 database) and closes the server's query sessions. Tests: `tests/test_server_remove.py`.
 
+**Built 2026-11-17 (user request), branch `admin-panel`, waiting for the user's review (not merged, not released):**
+per-server **Admin** tab with Sessions (stale detection, cancel / end) and Roles & users (create / edit / drop,
+SCRAM passwords made in the app, memberships). Design: decision 011. Tests: `tests/test_admin.py` (19, passed against
+the user's local PostgreSQL 18.6) plus a headless-Edge run of the whole panel. Next: the user tries it; on approval,
+merge to main and release (planned as 0.10.0).
+
 **Planned, not started:** faster, self-adjusting backups (background priority, writer thread, compression level,
 "Auto" speed, opt-in parallel workers within a connection budget). See `docs/PLAN_backup_speed.md`.
 

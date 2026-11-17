@@ -399,6 +399,7 @@ details.adv > div { margin-top: 12px; }
 <script src="ws/explorer.js"></script>
 <script src="ws/backup.js"></script>
 <script src="ws/servers.js"></script>
+<script src="ws/admin.js"></script>
 <script>
 'use strict';
 
@@ -798,7 +799,7 @@ function go(hash) { if (location.hash === hash) route(); else location.hash = ha
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map((p) => { try { return decodeURIComponent(p); } catch (e) { return p; } });
   if (parts[0] === 's' && parts[1]) {
-    const tab = ['databases', 'backup', 'restore', 'query'].includes(parts[2]) ? parts[2] : 'databases';
+    const tab = ['databases', 'backup', 'restore', 'query', 'admin'].includes(parts[2]) ? parts[2] : 'databases';
     return { view: tab, sid: parts[1], db: parts[3] || null };
   }
   if (parts[0] === 'activity') return { view: 'activity', job: parts[1] || null };
@@ -827,7 +828,7 @@ function route() {
   $('content').scrollTop = 0;
   $('content').classList.toggle('ws', r.view === 'query');
   if (r.view !== 'query' && typeof wsCloseAc === 'function') wsCloseAc();
-  ({ query: viewQuery, home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
+  ({ query: viewQuery, home: viewHome, databases: viewDatabases, backup: viewBackup, restore: viewRestore, admin: viewAdmin, activity: viewActivity, history: viewHistory })[r.view](view, routeToken);
 }
 
 function renderHeader() {
@@ -848,9 +849,10 @@ function renderHeader() {
     tabLink('backup', 'Backup', 'backup', base && base + '/backup' + (r.view === 'backup' && r.db ? '/' + enc(r.db) : '')),
     tabLink('restore', 'Restore', 'restore', base && base + '/restore'),
     tabLink('query', 'Query', 'code', base && base + '/query' + (r.view === 'query' && r.db ? '/' + enc(r.db) : '')),
+    tabLink('admin', 'Admin', 'shield', base && base + '/admin'),
     tabLink('activity', 'Activity', 'activity', '#/activity', n),
     tabLink('history', 'History', 'history', '#/history'));
-  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', query: 'SQL workspace', activity: 'Activity', history: 'History' };
+  const titles = { home: 'Welcome', databases: 'Databases', backup: 'Back up a database', restore: 'Restore a backup', query: 'SQL workspace', admin: 'Server admin', activity: 'Activity', history: 'History' };
   if (s) {
     clear(crumbs, icon('server'), el('b', { text: s.name }), el('span', { class: 'mono', text: `${s.user}@${s.host}:${s.port}` }),
       info ? el('span', { class: 'badge', text: 'PostgreSQL ' + info.version.split(' ')[0] }) : null,
