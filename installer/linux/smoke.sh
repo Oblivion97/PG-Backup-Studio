@@ -30,7 +30,9 @@ case "$PM" in
   apt)
     echo "--- .deb"
     DEB_ARCH=$([ "$ARCH" = x86_64 ] && echo amd64 || echo arm64)
-    apt-get install -y -qq "$PKG"/pg-backup-studio_*_"$DEB_ARCH".deb >/dev/null
+    # only our package: it has no required dependencies, and old releases (e.g. Debian 11, end of life) may no
+    # longer serve the recommended xdg-utils stack
+    apt-get install -y -qq --no-install-recommends "$PKG"/pg-backup-studio_*_"$DEB_ARCH".deb >/dev/null
     pg-backup-studio --selftest
     test -f /usr/share/applications/pg-backup-studio.desktop ;;
   dnf)
