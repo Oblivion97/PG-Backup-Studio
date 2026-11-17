@@ -1,7 +1,7 @@
 # 011 — Admin panel: sessions and roles & users
 
-_Date: 2026-11-17 · Status: **built on branch `admin-panel`, waiting for the user's review** (user: "build standard …
-first I will see it; if it works I will approve to merge and release"). Defaults chosen by the plan the user accepted._
+_Date: 2026-11-17 · Status: **approved by the user 2026-11-17** after trying it ("build standard … first I will see
+it; if it works I will approve to merge and release" → "approve"). Released in v0.10.0. Defaults chosen by the plan the user accepted._
 
 1. **Per-server Admin tab** (`#/s/<id>/admin`) after Query, with two sub-tabs: **Sessions** and **Roles & users**.
    Sessions and roles belong to one PostgreSQL server, like Databases (Activity / History stay app-wide).
