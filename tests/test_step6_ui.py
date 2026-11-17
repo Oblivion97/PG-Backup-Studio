@@ -43,7 +43,7 @@ def flask_app(tmp_path_factory):
 def api_calls(script: str) -> list[tuple[str, str]]:
     """(METHOD, path) of every `api('<METHOD>', '<literal or template>'...)` call, `${...}` replaced by `x`."""
     calls = []
-    for method, tpl, lit in re.findall(r"api\('(GET|POST|DELETE)',\s*(?:`(/api/[^`]*)`|'(/api/[^']*)')", script):
+    for method, tpl, lit in re.findall(r"api\('(GET|POST|PATCH|DELETE)',\s*(?:`(/api/[^`]*)`|'(/api/[^']*)')", script):
         path = re.sub(r"\$\{[^}]*\}", "x", tpl or lit).split("?")[0]
         calls.append((method, path))
     return calls
@@ -65,7 +65,7 @@ def test_page_size_budget(html):
 def test_no_external_resources(html):
     # the only script files are the app's own workspace scripts, by relative path (Step 8)
     srcs = re.findall(r"<script[^>]+src=[\"']([^\"']*)", html, re.I)
-    assert srcs == ["ws/grid.js", "ws/console.js", "ws/explorer.js", "ws/backup.js", "ws/servers.js"], srcs
+    assert srcs == ["ws/grid.js", "ws/console.js", "ws/explorer.js", "ws/backup.js", "ws/servers.js", "ws/admin.js"], srcs
     assert set(srcs) <= {f"ws/{n}" for n in WORKSPACE_SCRIPTS}
     assert not re.search(r"<link[^>]+href=", html, re.I)
     assert not re.search(r"@import|url\(\s*['\"]?https?:", html, re.I)

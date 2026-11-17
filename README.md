@@ -48,6 +48,14 @@ Backup files are never deleted.
   PC, Settings → **Servers → Import…** adds them. Servers already saved there are skipped, and a name that is
   already taken gets " (2)" added.
 
+**Server admin** (the **Admin** tab of a server; what it offers follows the saved login's rights)
+- **Sessions:** everyone connected, with state, how long, client and query. Stale sessions (idle in transaction
+  ≥ 5 min, idle ≥ 30 min; both adjustable) are flagged. Cancel a query or end sessions after a confirmation that lists
+  them; background processes are never ended.
+- **Roles & users:** create users and roles, set or remove passwords (sent only as a SCRAM-SHA-256 hash made on your
+  PC, never saved), set attributes, connection limit and password expiry, grant and revoke roles (with admin option),
+  rename and drop. Every change shows its SQL first and runs in one transaction.
+
 **SQL workspace**
 - Query tabs with syntax highlighting, suggestions (tables, columns, aliases, functions), a formatter and history.
 - Auto-commit or manual transactions, with Commit, Rollback and Cancel.

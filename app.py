@@ -23,7 +23,7 @@ from flask import Flask, g, jsonify, redirect, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 import jobs
-from engine import catalog, db, explore
+from engine import admin, catalog, db, explore
 from engine.console import ConsoleError, ConsoleManager
 from engine.precheck import run_precheck
 from engine.util import EngineError
@@ -32,9 +32,9 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.9.4"
+APP_VERSION = "0.10.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js")   # served at /ws/<name>, nothing else
+WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 GUARD_HEADER = "X-PGBS"
 TOKEN_COOKIE = "pgbs_launch"
@@ -375,6 +375,46 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
     @app.get("/api/servers/<sid>/roles")
     def roles_list(sid):
         return jsonify(db.list_roles(server_for(sid)))
+
+    # ------------------------------------------------------------ admin panel (decision 011)
+
+    @app.get("/api/servers/<sid>/admin/capabilities")
+    def admin_caps(sid):
+        return admin.capabilities(server_for(sid))
+
+    @app.get("/api/servers/<sid>/admin/sessions")
+    def admin_sessions(sid):
+        return admin.list_sessions(server_for(sid))
+
+    @app.post("/api/servers/<sid>/admin/sessions/<action>")
+    def admin_signal(sid, action):
+        if action not in ("cancel", "terminate"):
+            raise ApiError("Not found.", "not_found")
+        return admin.signal_sessions(server_for(sid), body().get("pids"), action)
+
+    @app.get("/api/servers/<sid>/admin/roles")
+    def admin_roles(sid):
+        return admin.list_roles(server_for(sid))
+
+    @app.post("/api/servers/<sid>/admin/roles")
+    def admin_role_create(sid):
+        return admin.create_role(server_for(sid), body()), 201
+
+    @app.post("/api/servers/<sid>/admin/roles/preview")
+    def admin_role_preview(sid):
+        data = body()
+        name = data.get("name_existing")
+        if name is not None and not isinstance(name, str):
+            raise ApiError("'name_existing' must be a role name.")
+        return {"sql": admin.preview(server_for(sid), data.get("spec"), name)}
+
+    @app.patch("/api/servers/<sid>/admin/roles/<path:name>")
+    def admin_role_alter(sid, name):
+        return admin.alter_role(server_for(sid), name, body())
+
+    @app.delete("/api/servers/<sid>/admin/roles/<path:name>")
+    def admin_role_drop(sid, name):
+        return admin.drop_role(server_for(sid), name, confirm=body().get("confirm"))
 
     @app.get("/api/servers/<sid>/templates")
     def templates_list(sid):
