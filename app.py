@@ -27,14 +27,16 @@ from engine import admin, catalog, db, explore, transfer
 from engine.console import ConsoleError, ConsoleManager
 from engine.precheck import run_precheck
 from engine.util import EngineError
+import native_dialogs
 from jobs import JobError, JobManager
 from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.12.0"
+APP_VERSION = "0.13.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js", "transfer.js")   # served at /ws/<name>, nothing else
+WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js", "transfer.js",
+                     "pickers.js", "retry.js")   # served at /ws/<name>, nothing else
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 GUARD_HEADER = "X-PGBS"
 TOKEN_COOKIE = "pgbs_launch"
@@ -270,7 +272,8 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
     @app.get("/api/app")
     def app_info():
         return {"version": APP_VERSION, "warnings": list(store.warnings), "desktop": desktop is not None,
-                "data_dir": str(store.dir), "can_quit": bool(getattr(desktop, "can_quit", False))}
+                "data_dir": str(store.dir), "can_quit": bool(getattr(desktop, "can_quit", False)),
+                "dialogs": desktop is not None or native_dialogs.available()}
 
     @app.post("/api/app/quit")
     def app_quit():
@@ -288,14 +291,30 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
 
     # ------------------------------------------------------------ desktop helpers (Step 9)
 
+    def dialogs():
+        """Who shows file dialogs: the desktop window, or the operating system for a page in a browser."""
+        return desktop if desktop is not None else native_dialogs
+
+    def dialog_start() -> str:
+        start = field(body(), "start", required=False) or ""
+        if not isinstance(start, str):
+            raise ApiError("'start' must be a path.")
+        return start
+
     @app.post("/api/pick-folder")
     def pick_folder():
-        if desktop is None:
-            raise ApiError("Choosing a folder with a dialog works in the desktop app; type the path instead.",
-                           "invalid")
-        start = field(body(), "start", required=False) or ""
-        start = os.path.expanduser(start)
-        return {"path": desktop.pick_folder(start if os.path.isdir(start) else str(Path.home()))}
+        try:
+            return {"path": dialogs().pick_folder(dialog_start())}
+        except native_dialogs.DialogError as e:
+            raise ApiError(str(e), "invalid") from e
+
+    @app.post("/api/pick-file")
+    def pick_file():
+        """A backup file to restore: {start?} (a folder or a file) → {path | null}."""
+        try:
+            return {"path": dialogs().pick_file(dialog_start() or store.get_settings().get("output_dir") or "")}
+        except native_dialogs.DialogError as e:
+            raise ApiError(str(e), "invalid") from e
 
     @app.post("/api/data-folder/open")
     def data_folder_open():
@@ -757,6 +776,21 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
             raise ApiError("This history entry has no file.", "not_found")
         return {"opened": open_in_file_manager(entry["file"])}
 
+    @app.post("/api/history/<entry_id>/retry")
+    def history_retry(entry_id):
+        """Start a failed / cancelled / interrupted backup or restore again (decision 014). Body: {password?,
+        target?} — `target` replaces the restore target, e.g. drop and recreate a half-restored database."""
+        data = body()
+        entry = store.get_history(entry_id)
+        if entry is None:
+            raise ApiError("This history entry no longer exists.", "not_found")
+        sid = (entry.get("server") or {}).get("id") or ""
+        server = server_for(sid, data.get("password"))
+        target = data.get("target")
+        if target is not None and not isinstance(target, dict):
+            raise ApiError("The restore target must be an object.")
+        return {"job_id": manager.retry(entry_id, password=server.get("password"), target=target)}, 202
+
     @app.get("/api/settings")
     def settings_get():
         return store.get_settings()
@@ -764,9 +798,14 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
     @app.post("/api/settings")
     def settings_save():
         data = body()
+        before = store.get_settings().get("output_dir")
         if isinstance(data.get("output_dir"), str) and data["output_dir"].strip():
             check_output_folder(data["output_dir"])
-        return store.save_settings(data)
+        saved = store.save_settings(data)
+        if saved.get("output_dir") != before:
+            # a folder chosen here is used by every database's next backup, not the folder each one remembered
+            store.forget_profile_folders()
+        return saved
 
     return app
 

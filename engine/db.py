@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 MIN_SERVER_VERSION = 120000
 APPLICATION_NAME = "PG Backup Studio"
+KEEPALIVE_IDLE_S, KEEPALIVE_INTERVAL_S, KEEPALIVE_COUNT = 30, 10, 6
 
 
 class UnsupportedServerError(EngineError):
@@ -43,6 +44,12 @@ def connect(server: dict, dbname: str | None = None, *, autocommit: bool = False
         "dbname": db,
         "sslmode": server.get("sslmode") or "prefer",
         "connect_timeout": 10,
+        # a dropped network otherwise leaves a backup or restore waiting forever: TCP keepalives notice a
+        # silent connection after about 30 + 6 x 10 s and the job fails (and can be retried, decision 014)
+        "keepalives": 1,
+        "keepalives_idle": KEEPALIVE_IDLE_S,
+        "keepalives_interval": KEEPALIVE_INTERVAL_S,
+        "keepalives_count": KEEPALIVE_COUNT,
         "application_name": APPLICATION_NAME,
     }
     try:

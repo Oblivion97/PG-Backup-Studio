@@ -1,6 +1,6 @@
 # PG Backup Studio — Project Status
 
-_Last updated: 2026-10-28_
+_Last updated: 2026-11-19_
 
 Spec: `.claude/commands/pg-backup-studio.md` · Design: `docs/ARCHITECTURE.md` · Decisions:
 `docs/decisions/` · Tests: `docs/QA_REPORT.md`
@@ -92,6 +92,13 @@ with the native window; Linux in browser mode (page Quit button) as AppImage, .d
 aarch64, built on Rocky Linux 8 (glibc 2.28) and install-tested on 16 distribution images. Built and attached by
 `.github/workflows/build-mac-linux.yml` when a release is published; Windows still via `build_desktop.bat`.
 `desktop.py --selftest` checks a build. Single instance + reopen on macOS / Linux via app.lock / app.sock.
+
+**Added 2026-11-19 (user request, approved after trying it), v0.13.0:** Retry for a failed / cancelled /
+interrupted backup or restore (Activity + History, works after a restart; a restore retry asks drop-and-recreate or
+restore-as-is), TCP keepalives so a dropped network fails a job within ~90 s instead of hanging, and native folder /
+file dialogs in browser mode (`native_dialogs.py`), including Browse… for Restore → File on this PC. A new default backup folder in Settings now replaces the folder
+each database remembered. Decision 014.
+Tests: `tests/test_retry.py`.
 
 **Added 2026-11-17 (user request, approved after trying it), v0.12.0:** Transfer tab
 (decision 013): copy a table's rows into a table of another database on any saved server; compare → direct

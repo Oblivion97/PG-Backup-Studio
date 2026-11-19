@@ -592,6 +592,22 @@ class Store:
             self._write(PROFILES, doc)
         return profile
 
+    def forget_profile_folders(self) -> int:
+        """Drop the remembered folder from every backup profile, so each database uses the default backup folder
+        again (the user chose a new one in Settings). Returns how many profiles changed."""
+        changed = 0
+        with self.lock:
+            doc = self._read(PROFILES)
+            for per_server in doc["profiles"].values():
+                for profile in (per_server.values() if isinstance(per_server, dict) else ()):
+                    options = profile.get("options") if isinstance(profile, dict) else None
+                    if isinstance(options, dict) and "out_dir" in options:
+                        del options["out_dir"]
+                        changed += 1
+            if changed:
+                self._write(PROFILES, doc)
+        return changed
+
     def delete_profile(self, server_id: str, db: str) -> bool:
         with self.lock:
             doc = self._read(PROFILES)

@@ -33,6 +33,7 @@ import threading
 from werkzeug.serving import make_server
 
 import app as web
+import native_dialogs
 from store import APP_NAME, Store
 
 try:   # not bundled on Linux (browser mode only)
@@ -47,6 +48,7 @@ WINDOW_SIZE = (1440, 920)
 MIN_SIZE = (980, 640)
 TRAY = os.name == "nt"   # browser mode keeps running behind a tray icon (Windows) or until the page's Quit (others)
 close_question = web.close_question
+PYWEBVIEW_FILE_TYPES = ("Backup files (*.sql;*.gz)", "All files (*.*)")
 
 
 class Bridge:
@@ -67,13 +69,20 @@ class Bridge:
         threading.Timer(0.3, self.quit_event.set).start()
 
     def pick_folder(self, start: str) -> str | None:
-        """Native folder picker; None when cancelled."""
-        if self.in_browser:
-            raise web.ApiError("PG Backup Studio is running in your browser, which cannot show a folder dialog; "
-                               "type the path instead.", "invalid")
-        if self.window is None or webview is None:
-            return None
-        chosen = self.window.create_file_dialog(webview.FileDialog.FOLDER, directory=start)
+        """Native folder picker; None when cancelled. Browser mode: the operating system's dialog (decision 014)."""
+        if self.in_browser or self.window is None or webview is None:
+            return native_dialogs.pick_folder(start)
+        chosen = self.window.create_file_dialog(webview.FileDialog.FOLDER, directory=native_dialogs.start_dir(start))
+        return chosen[0] if chosen else None
+
+    def pick_file(self, start: str) -> str | None:
+        """Native "open a backup file" dialog; None when cancelled."""
+        if self.in_browser or self.window is None or webview is None:
+            return native_dialogs.pick_file(start)
+        chosen = self.window.create_file_dialog(webview.FileDialog.OPEN, directory=native_dialogs.start_dir(start),
+                                                file_types=PYWEBVIEW_FILE_TYPES)
+        if isinstance(chosen, str):
+            return chosen
         return chosen[0] if chosen else None
 
 
