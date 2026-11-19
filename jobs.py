@@ -38,6 +38,7 @@ WEIGHT_OBJECTS, WEIGHT_DATA = 0.2, 0.8
 CANCELLED_BY_USER = "Cancelled by user"
 CANCELLED_BY_CLOSE = "Cancelled: the app was closed"
 TARGET_MODES = ("existing", "create", "recreate")
+RETRYABLE = ("failed", "cancelled", "interrupted")
 _PHASE_TEXT = {"preparing": "Preparing the target database", "connecting": "Connecting to the server", "catalog": "Reading the catalog",
                "write": "Writing the backup file", "restore": "Running the backup file",
                "saving": "Saving the result", "copy": "Copying rows",
@@ -68,6 +69,7 @@ class Job:
         self.uses = [(server["id"], dbname)]                 # (server id, database) this job reads or writes
         self.server_ref = {"id": server["id"], "name": server.get("name")}
         self.source = path
+        self.retried_from: str | None = None                 # History id of the attempt this job retries
         self.status, self.phase = "running", "starting"
         self.cancel_event = threading.Event()
         self.cancel_requested = self.closing = False
@@ -169,9 +171,10 @@ class Job:
                    "progress": progress,
                    "error_count": self.error_count, "warning_count": self.warning_count,
                    "log_seq": self.log_seq, "result": copy.deepcopy(self.result), "error": self.error,
-                   "history_id": self.id, "history_error": self.history_error,
+                   "history_id": self.id, "history_error": self.history_error, "retried_from": self.retried_from,
                    "mode": self.options.mode if self.kind == "backup" else
-                   self.options.existing if self.kind == "transfer" else None}
+                   self.options.existing if self.kind == "transfer" else None,
+                   "target_mode": self.target["mode"] if self.kind == "restore" and self.target else None}
             if self.kind == "transfer":
                 o = self.options
                 out["transfer"] = {"source": {"server": (self._source_server or {}).get("name"), "database": o.src_db,
@@ -224,7 +227,8 @@ class JobManager:
         if not isinstance(dbname, str) or not dbname:
             raise JobError("Choose a database.")
 
-    def start_backup(self, server_id: str, dbname: str, options=None, *, password: str | None = None) -> str:
+    def start_backup(self, server_id: str, dbname: str, options=None, *, password: str | None = None,
+                     retried_from: str | None = None) -> str:
         server = self._server(server_id, password)
         self._check_db(dbname)
         if options is not None and not isinstance(options, (dict, BackupOptions)):
@@ -234,12 +238,17 @@ class JobManager:
         except (EngineError, TypeError, ValueError) as e:
             raise JobError(str(e)) from e
         job = self._register("backup", server, dbname, opts)
+        job.retried_from = retried_from
+        retry = {"options": opts.to_profile()["options"]}
+        if retried_from:
+            retry["from"] = retried_from
         self._add_history(job, {"file": None, "part_file": None, "size": None, "mode": opts.mode,
-                                "gzip": bool(opts.gzip), "partial": False})
+                                "gzip": bool(opts.gzip), "partial": False, "retry": retry})
         return self._launch(job)
 
     def start_restore(self, server_id: str, dbname: str, path: str, options=None, *, password: str | None = None,
-                      source_history_id: str | None = None, target: dict | None = None) -> str:
+                      source_history_id: str | None = None, target: dict | None = None,
+                      retried_from: str | None = None) -> str:
         """Restore `path` into `dbname`. `target`: {mode: existing | create | recreate, owner, allow_non_empty,
         confirm}; recreate needs `confirm` equal to `dbname` (ARCHITECTURE 11.6)."""
         server = self._server(server_id, password)
@@ -257,11 +266,15 @@ class JobManager:
         except (EngineError, TypeError, ValueError) as e:
             raise JobError(str(e)) from e
         job = self._register("restore", server, dbname, opts, path, target)
+        job.retried_from = retried_from
+        retry = {"target": dict(target)}   # never the typed confirmation: a retry of "recreate" asks again
+        if retried_from:
+            retry["from"] = retried_from
         self._add_history(job, {"file": path, "size": os.path.getsize(path), "source_history_id": source_history_id,
                                 "target_mode": target["mode"],
                                 "options": {"on_error": opts.on_error,
                                             "single_transaction": opts.single_transaction},
-                                "partial": False})
+                                "partial": False, "retry": retry})
         return self._launch(job)
 
     def start_transfer(self, server_id: str, target_server_id: str, spec, *, password: str | None = None,
@@ -282,6 +295,49 @@ class JobManager:
                                 "table": f"{spec.tgt_schema}.{spec.tgt_table}", "created": spec.create,
                                 "partial": False})
         return self._launch(job)
+
+    def retry(self, history_id: str, *, password: str | None = None, target: dict | None = None) -> str:
+        """Start a failed, cancelled or interrupted backup or restore again with the same settings (decision 014).
+
+        Works from the History entry, so it also works after the app was restarted. A restore may get another
+        `target` (the failed attempt may have left a half-restored database); "recreate" always needs the typed
+        confirmation again. Returns the new job id; the new History entry records `retry.from`."""
+        entry = self.store.get_history(history_id)
+        if entry is None:
+            raise JobError("This History entry no longer exists.", "not_found")
+        kind = entry.get("kind")
+        if kind not in ("backup", "restore"):
+            raise JobError("Only a backup or a restore can be retried.")
+        if entry.get("status") not in RETRYABLE:
+            raise JobError("Only a failed, cancelled or interrupted job can be retried.", "conflict")
+        info = entry.get("retry")
+        if not isinstance(info, dict):
+            raise JobError("This entry was made by an older version that did not keep its settings; "
+                           "start it again from the Backup or Restore page.")
+        sid = (entry.get("server") or {}).get("id")
+        if not sid or self.store.get_server(sid) is None:
+            raise JobError("The server of this job has been removed.", "not_found")
+        with self._lock:
+            again = [j for j in self._jobs.values() if j.status == "running" and j.retried_from == history_id]
+        if again:
+            raise JobError("A retry of this job is already running.", "conflict")
+        dbname = entry.get("database")
+        if kind == "backup":
+            return self.start_backup(sid, dbname, info.get("options"), password=password, retried_from=history_id)
+        return self.start_restore(sid, dbname, entry.get("file"), entry.get("options"), password=password,
+                                  source_history_id=entry.get("source_history_id"),
+                                  target=self._retry_target(info.get("target"), target),
+                                  retried_from=history_id)
+
+    @staticmethod
+    def _retry_target(saved, given):
+        """The target of a restore retry: the one given (keeping the saved owner when it names none), else the saved
+        one."""
+        if given is None:
+            return saved
+        if isinstance(given, dict) and isinstance(saved, dict) and "owner" not in given:
+            return {**given, "owner": saved.get("owner")}
+        return given
 
     @staticmethod
     def _clean_target(server: dict, dbname: str, target) -> dict:

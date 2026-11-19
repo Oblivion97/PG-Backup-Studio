@@ -107,6 +107,14 @@ address to open. Data is kept in `~/.config/PG Backup Studio`.
 - The SQL is shown before it starts. Everything on the target runs in one transaction: if anything fails or you
   cancel, nothing there changes. Progress is in Activity, the result in History.
 
+**When a backup or restore stops**
+- A lost network connection is noticed within about 90 seconds; the job fails instead of waiting forever.
+- Failed, cancelled and interrupted backups and restores have a **Retry** button (Activity and History) that starts
+  them again with the same settings, also after the app was closed. A restore retry asks whether to drop and
+  recreate the half-restored database (type its name) or restore into it as it is.
+- Restore → **File on this PC** has **Browse…**: Explorer opens in your backup folder and the chosen file is put in
+  the field.
+
 **SQL workspace**
 - Query tabs with syntax highlighting, suggestions (tables, columns, aliases, functions), a formatter and history.
 - Auto-commit or manual transactions, with Commit, Rollback and Cancel.
@@ -122,8 +130,8 @@ address to open. Data is kept in `~/.config/PG Backup Studio`.
 - If Microsoft Edge WebView2 cannot start (the window would stay blank), the app opens in your default browser
   instead, with a PG Backup Studio icon in the notification area (by the clock; Windows may tuck it under **^**).
   Click the icon to open the app in the browser again; right-click → **Quit** to stop it. Closing the browser tab
-  does not stop the app, and starting it again from the Start menu reopens the tab. In this mode **Browse…** for
-  folders is not available, so type the path.
+  does not stop the app, and starting it again from the Start menu reopens the tab. **Browse…** still works there:
+  the app opens the Windows folder or file dialog itself (on Linux this needs `zenity` or `kdialog`).
 
 ## Where your data is kept
 

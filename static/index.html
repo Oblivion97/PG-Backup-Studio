@@ -401,6 +401,8 @@ details.adv > div { margin-top: 12px; }
 <script src="ws/servers.js"></script>
 <script src="ws/admin.js"></script>
 <script src="ws/transfer.js"></script>
+<script src="ws/pickers.js"></script>
+<script src="ws/retry.js"></script>
 <script>
 'use strict';
 
@@ -1061,23 +1063,11 @@ async function settingsModal() {
     m.error('');
     try {
       state.settings = await api('POST', '/api/settings', { output_dir: f.out.value, large_table_mb: n(f.mb), large_table_rows: n(f.rows), history_limit: n(f.hist) });
+      if (state.backup && state.settings.output_dir !== s.output_dir) { state.backup.out_dir = state.settings.output_dir; if (state.route.view === 'backup') route(); }
       m.close();
       toast('Settings saved.', 'ok');
     } catch (e) { busy(save, false); m.error(e.message); }
   };
-}
-/** `input` with a Browse button (native folder picker) in the desktop app; the input alone in a browser. */
-function folderField(input) {
-  if (!state.desktop) return input;
-  input.style.flex = '1';
-  const b = el('button', { class: 'btn', type: 'button' }, icon('folder'), 'Browse…');
-  b.onclick = async () => {
-    try {
-      const r = await api('POST', '/api/pick-folder', { start: input.value });
-      if (r.path) { input.value = r.path; input.dispatchEvent(new Event('change')); }
-    } catch (e) { toastError(e); }
-  };
-  return el('div', { class: 'row' }, input, b);
 }
 function dataField(closeSettings) {
   const open = el('button', { class: 'btn sm', type: 'button', onclick: () => api('POST', '/api/data-folder/open').catch(toastError) }, icon('folder'), 'Open');
@@ -1096,8 +1086,8 @@ function dataField(closeSettings) {
     } catch (e) { toastError(e, 'Not imported'); }
   };
   return el('div', { class: 'field' }, el('label', null, 'App data'),
-    el('div', { class: 'row' }, el('span', { class: 'mono subtle grow', text: state.dataDir }), open, state.desktop ? imp : null),
-    el('div', { class: 'hint', text: 'Saved servers, history and settings.' + (state.desktop ? ' Import copies them from another data folder, e.g. the data folder of a copy run from source.' : '') }));
+    el('div', { class: 'row' }, el('span', { class: 'mono subtle grow', text: state.dataDir }), open, state.dialogs ? imp : null),
+    el('div', { class: 'hint', text: 'Saved servers, history and settings.' + (state.dialogs ? ' Import copies them from another data folder, e.g. the data folder of a copy run from source.' : '') }));
 }
 function applyTheme(t) {
   store('theme', t);
@@ -1763,7 +1753,7 @@ function drawRestore(view) {
       el('div', { class: 'alert info' }, icon('info'), el('div', { class: 'body', text: 'No successful backups in the history yet. Choose "File on this PC" to restore a .sql or .sql.gz file.' }));
   } else {
     srcBody = el('div', { class: 'field' }, el('label', null, 'Full path of a .sql or .sql.gz file'),
-      el('input', { class: 'input mono', value: r.file, placeholder: 'C:\\Users\\you\\pg_backups\\shop_20261027_101500.sql.gz', oninput: (e) => { r.file = e.target.value; startBtnState(); }, onchange: () => refreshRestore() }),
+      backupFileField(el('input', { class: 'input mono', value: r.file, placeholder: 'C:\\Users\\you\\pg_backups\\shop_20261027_101500.sql.gz', oninput: (e) => { r.file = e.target.value; startBtnState(); }, onchange: () => refreshRestore() })),
       el('div', { class: 'hint', text: 'Gzip is detected from the file content, not the extension.' }));
   }
 
@@ -2038,7 +2028,7 @@ function jobCard(j) {
     el('div', { class: 'job-ic ' + snap.kind }, icon(kindIcon(snap.kind))),
     el('div', { style: 'min-width: 0' }, el('div', { class: 'job-title' }, el('span', { class: 'n', text: `${kindName(snap.kind)} · ${snap.kind === 'transfer' && snap.transfer ? snap.transfer.target.table + ' @ ' : ''}${snap.database}` }), statusBadge(snap.status, snap)),
       el('div', { class: 'job-sub' }, sub)),
-    el('div', { class: 'row' }, cancel, el('span', { class: 'btn sm ghost icon-only', style: open ? 'transform: rotate(90deg)' : '' }, icon('chevron'))));
+    el('div', { class: 'row' }, cancel, running ? null : retryButton(snap), el('span', { class: 'btn sm ghost icon-only', style: open ? 'transform: rotate(90deg)' : '' }, icon('chevron'))));
   const line2 = running ? `${fmt.dur(snap.elapsed_s)} elapsed${snap.eta_s !== null && snap.eta_s !== undefined ? ` · about ${fmt.dur(snap.eta_s)} left` : ''}` : `took ${fmt.dur(snap.elapsed_s)}`;
   const curText = p.current ? (snap.kind !== 'restore' ? `${p.current.name}${p.current.est_rows ? ` · ${fmt.num(p.current.rows)} / ≈${fmt.num(p.current.est_rows)} rows` : p.current.rows ? ` · ${fmt.num(p.current.rows)} rows` : ''}` : `${p.current.kind || ''} ${p.current.name || ''}`.trim()) : '';
   const prog = el('div', { class: 'job-prog' },
@@ -2076,6 +2066,8 @@ function jobBody(j, d) {
   if (j.file) body.appendChild(el('div', { class: 'row', style: 'gap: 8px' }, icon('file'), el('span', { class: 'mono', text: j.file, style: 'word-break: break-all' })));
   if (j.history_error) body.appendChild(el('div', { class: 'alert warn' }, icon('alert'), el('div', { class: 'body', text: j.history_error })));
   const res = j.result;
+  const hint = networkHint(j);
+  if (hint) body.appendChild(hint);
   if (res && j.status !== 'running') body.appendChild(j.kind === 'transfer' ? trResult(j, res) : resultBlock(j, res));
   else if (j.status === 'failed' && j.error) body.appendChild(el('div', { class: 'alert danger' }, icon('alert'), el('div', { class: 'body' }, el('b', { text: 'The job failed' }), j.error)));
   const lines = d ? d.log : [];
@@ -2212,15 +2204,15 @@ function historyRow(h) {
         el('div', { class: 'subtle', style: 'font-weight: 400', text: h.kind === 'transfer' ? trHistoryText(h) : isBackup ? `Backup${h.mode && h.mode !== 'full' ? ` · ${MODE_LABEL[h.mode] || h.mode}` : ''}` : `Restore${h.target_mode ? ` · ${{ create: 'new database', existing: 'existing database', recreate: 'recreated' }[h.target_mode] || h.target_mode}` : ''}` })))),
     el('td', { class: 'nowrap', title: h.started }, el('div', { text: fmt.date(h.started) }), el('div', { class: 'subtle', text: fmt.ago(h.started) })),
     el('td', { text: (h.server && h.server.name) || '' }),
-    el('td', { class: 'mono', style: 'max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap', title: h.file || '', text: fmt.basename(h.file) || '—' }),
+    el('td', { class: 'mono', style: 'max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap', title: h.file || '', text: fmt.basename(h.file) || '—' }),
     el('td', { class: 'num' }, fmt.bytes(h.size)),
     el('td', { class: 'num' }, fmt.dur(h.duration_s)),
     el('td', null, el('div', { class: 'row wrap', style: 'gap: 4px' }, statusBadge(h.status, h), h.warning_count ? el('span', { class: 'badge warn', text: fmt.plural(h.warning_count, 'warning') }) : null),
       counts.length ? el('div', { class: 'subtle', text: counts.join(' · ') }) : null,
-      h.error && h.status !== 'success' ? el('div', { class: 'subtle', style: 'color: var(--danger); max-width: 280px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap', title: h.error, text: h.error }) : null),
+      h.error && h.status !== 'success' ? el('div', { class: 'subtle', style: 'color: var(--danger); max-width: 180px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap', title: h.error, text: h.error }) : null),
     el('td', null, el('div', { class: 'actions' },
       canRestore ? el('button', { class: 'btn sm', type: 'button', onclick: () => restoreFromHistory(h) }, icon('restore'), 'Restore') : null,
-      more)));
+      retryButton(h, true), more)));
 }
 
 function restoreFromHistory(h) {
@@ -2261,6 +2253,7 @@ async function start() {
     const info = await api('GET', '/api/app');
     state.version = info.version;
     state.desktop = !!info.desktop;
+    state.dialogs = !!info.dialogs;
     state.dataDir = info.data_dir || '';
     if (info.can_quit) setupQuit();
     for (const w of info.warnings || []) toast(w, 'warn', 'Data file problem');

@@ -99,3 +99,13 @@ def restore_db(pg_admin):
     yield make
     for n in made:
         drop_database(pg_admin, n)
+
+
+@pytest.fixture(autouse=True)
+def no_real_file_dialogs(monkeypatch):
+    """A test must never open a real Explorer / Finder / zenity dialog on the developer's screen (decision 014)."""
+    import native_dialogs
+
+    def refuse(folder, start):
+        raise AssertionError("a test tried to open a real file dialog; monkeypatch native_dialogs.pick_folder / pick_file")
+    monkeypatch.setattr(native_dialogs, "_run", refuse)

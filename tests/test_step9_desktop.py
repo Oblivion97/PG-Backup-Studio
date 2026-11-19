@@ -9,6 +9,7 @@ import store as store_mod
 from app import TOKEN_COOKIE, create_app
 from engine.console import ConsoleManager
 from jobs import JobManager
+import native_dialogs
 from store import APP_NAME, Store, StoreError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -87,13 +88,14 @@ def test_launch_token_guards_the_api(tmp_path):
     assert c.get("/").status_code == 200
 
 
-def test_browser_mode_has_no_token_and_no_launch(tmp_path):
+def test_browser_mode_has_no_token_and_no_launch(tmp_path, monkeypatch):
     _, c = client_for(tmp_path)
     info = c.get("/api/app", headers=H).get_json()
     assert info["desktop"] is False and info["data_dir"].endswith("data")
     assert c.get("/launch/anything").status_code == 404
-    r = c.post("/api/pick-folder", json={}, headers=H)
-    assert r.status_code == 400 and "desktop app" in r.get_json()["error"]
+    # no window: the operating system's dialog is shown by the server (decision 014); never a real one in tests
+    monkeypatch.setattr(native_dialogs, "pick_folder", lambda start: None)
+    assert c.post("/api/pick-folder", json={}, headers=H).get_json() == {"path": None}
 
 
 # ---------------------------------------------------------------- folder picker, settings, import
@@ -104,8 +106,7 @@ def test_pick_folder_uses_the_window(tmp_path):
     assert c.get("/api/app", headers=H).get_json()["desktop"] is True
     r = c.post("/api/pick-folder", json={"start": str(tmp_path)}, headers=H)
     assert r.get_json() == {"path": str(tmp_path / "chosen")} and fake.asked == [str(tmp_path)]
-    c.post("/api/pick-folder", json={"start": str(tmp_path / "missing")}, headers=H)
-    assert fake.asked[-1] == str(Path.home()), "a folder that does not exist starts at home"
+    assert native_dialogs.start_dir(str(tmp_path / "missing")) == str(tmp_path), "the nearest folder that exists"
     fake.answer = None
     assert c.post("/api/pick-folder", json={}, headers=H).get_json() == {"path": None}
 
@@ -273,13 +274,22 @@ def test_second_launch_finds_no_browser_mode_app(monkeypatch):
     assert desktop.signal_running_instance() is False   # nothing listening: the "already open" message is shown
 
 
-def test_pick_folder_in_browser_fallback_says_type_the_path(tmp_path):
+def test_pick_folder_and_file_in_browser_fallback_use_the_system_dialog(tmp_path, monkeypatch):
     desktop = pytest.importorskip("desktop")
     bridge = desktop.Bridge()
     bridge.in_browser = True
+    asked = []
+    monkeypatch.setattr(native_dialogs, "pick_folder", lambda start: asked.append(("folder", start)) or str(tmp_path))
+    monkeypatch.setattr(native_dialogs, "pick_file", lambda start: asked.append(("file", start)) or None)
     _, c = client_for(tmp_path, desktop=bridge)
+    assert c.get("/api/app", headers=H).get_json()["dialogs"] is True
+    assert c.post("/api/pick-folder", json={"start": "x"}, headers=H).get_json() == {"path": str(tmp_path)}
+    assert c.post("/api/pick-file", json={"start": "y"}, headers=H).get_json() == {"path": None}
+    assert asked == [("folder", "x"), ("file", "y")]
+    monkeypatch.setattr(native_dialogs, "pick_folder",
+                        lambda start: (_ for _ in ()).throw(native_dialogs.DialogError("No file dialog is available")))
     r = c.post("/api/pick-folder", json={}, headers=H)
-    assert r.status_code == 400 and "type the path" in r.get_json()["error"]
+    assert r.status_code == 400 and "No file dialog" in r.get_json()["error"]
 
 
 def test_open_transactions_counts_nothing_without_sessions():
