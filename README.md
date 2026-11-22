@@ -90,9 +90,17 @@ address to open. Data is kept in `~/.config/PG Backup Studio`.
 - **Sessions:** everyone connected, with state, how long, client and query. Stale sessions (idle in transaction
   ≥ 5 min, idle ≥ 30 min; both adjustable) are flagged. Cancel a query or end sessions after a confirmation that lists
   them; background processes are never ended.
-- **Roles & users:** create users and roles, set or remove passwords (sent only as a SCRAM-SHA-256 hash made on your
-  PC, never saved), set attributes, connection limit and password expiry, grant and revoke roles (with admin option),
-  rename and drop. Every change shows its SQL first and runs in one transaction.
+- **Users:** create a user with a name, a password (Generate makes one; sent only as a SCRAM-SHA-256 hash made on
+  your PC, never saved) and the groups it belongs to. Expiry, connection limit and special permissions sit under
+  "More options". Edit, rename or delete.
+- **Groups:** create a group, describe it and tick its members. Give access to the group once and every member gets it.
+- **Access:** pick a user or group and a database, then choose from a dropdown per schema (or table by table) what it
+  may do with the tables: *No access, Read only, Read & write, Read, write & delete, Full control* or *Custom* (read,
+  add, edit, delete rows, empty table, foreign keys, triggers). Also: run functions, create new tables, apply the same
+  access to tables created later, connect / create schemas / temporary tables on the database. What a group or PUBLIC
+  already gives is shown. The schema USAGE, database CONNECT and serial-sequence rights needed to make it work are
+  added for you.
+- Every change is summed up in plain words (the SQL is one click away) and runs in one transaction.
 
 **Table transfer** (the **Transfer** tab of a server)
 - Copy the rows of one table (or view) into a table in another database, on any saved server, the same one included.

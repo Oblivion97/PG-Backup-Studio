@@ -212,6 +212,15 @@ def _memberships(value) -> list[dict]:
     return out
 
 
+def _members(value) -> list[str]:
+    """Roles that get this role (a group's members), as names."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise DbActionError("'Members' must be a list of role names.")
+    return [check_name(v, "role name") for v in dict.fromkeys(value)]
+
+
 def _options(spec: dict, *, creating: bool) -> list[sql.Composable]:
     """WITH options for CREATE / ALTER ROLE from a spec (only keys present when altering)."""
     parts: list[sql.Composable] = []
@@ -243,7 +252,7 @@ def _password_part(spec: dict, mask: bool) -> sql.Composable | None:
 
 
 def build_create(spec: dict, *, mask: bool = False) -> list[sql.Composable]:
-    """Statements for a new role: CREATE ROLE … then one GRANT per membership."""
+    """Statements for a new role: CREATE ROLE … then one GRANT per membership (`member_of`) and member (`members`)."""
     if not isinstance(spec, dict):
         raise DbActionError("Role details must be an object.")
     name = _role_name(spec.get("name"))
@@ -254,6 +263,8 @@ def build_create(spec: dict, *, mask: bool = False) -> list[sql.Composable]:
     stmts = [sql.SQL("CREATE ROLE {} WITH {}").format(sql.Identifier(name), sql.SQL(" ").join(opts))]
     for m in _memberships(spec.get("member_of")):
         stmts.append(_grant(m["name"], name, m["admin"]))
+    for member in _members(spec.get("members")):
+        stmts.append(_grant(name, member, False))
     if isinstance(spec.get("comment"), str) and spec["comment"].strip():
         stmts.append(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(name), sql.Literal(spec["comment"].strip())))
     return stmts
@@ -286,6 +297,13 @@ def build_alter(name: str, spec: dict, current: dict | None, *, mask: bool = Fal
                 stmts.append(_grant(role, name, want[role]))
             elif have[role] and not want[role]:
                 stmts.append(sql.SQL("REVOKE ADMIN OPTION FOR {} FROM {}").format(sql.Identifier(role), sql.Identifier(name)))
+    if "members" in spec:
+        want_m = set(_members(spec["members"]))
+        have_m = set((current or {}).get("members", []))
+        for member in sorted(have_m - want_m):
+            stmts.append(sql.SQL("REVOKE {} FROM {}").format(sql.Identifier(name), sql.Identifier(member)))
+        for member in sorted(want_m - have_m):
+            stmts.append(_grant(name, member, False))
     if "comment" in spec and (current or {}).get("comment") != (spec["comment"] or None):
         text = spec["comment"].strip() if isinstance(spec["comment"], str) else ""
         stmts.append(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(name), sql.Literal(text) if text else sql.NULL))
@@ -301,7 +319,9 @@ def _current_role(conn: psycopg.Connection, name: str) -> dict:
             "SELECT r.rolname AS name, pg_catalog.shobj_description(r.oid, 'pg_authid') AS comment,"
             " COALESCE((SELECT json_agg(json_build_object('name', b.rolname, 'admin', m.admin_option))"
             "  FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles b ON b.oid = m.roleid"
-            "  WHERE m.member = r.oid), '[]') AS member_of"
+            "  WHERE m.member = r.oid), '[]') AS member_of,"
+            " COALESCE((SELECT json_agg(u.rolname) FROM pg_catalog.pg_auth_members m"
+            "  JOIN pg_catalog.pg_roles u ON u.oid = m.member WHERE m.roleid = r.oid), '[]') AS members"
             " FROM pg_catalog.pg_roles r WHERE r.rolname = %s", (name,)).fetchone()
     if row is None:
         raise DbActionError(f"Role {name} does not exist.", "not_found")

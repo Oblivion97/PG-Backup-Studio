@@ -23,7 +23,7 @@ from flask import Flask, g, jsonify, redirect, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 import jobs
-from engine import admin, catalog, db, explore, transfer
+from engine import access, admin, catalog, db, explore, transfer
 from engine.console import ConsoleError, ConsoleManager
 from engine.precheck import run_precheck
 from engine.util import EngineError
@@ -462,6 +462,28 @@ def create_app(store: Store | None = None, manager: JobManager | None = None,
     @app.delete("/api/servers/<sid>/admin/roles/<path:name>")
     def admin_role_drop(sid, name):
         return admin.drop_role(server_for(sid), name, confirm=body().get("confirm"))
+
+    # ------------------------------------------------------------ access rights (decision 015)
+
+    def access_args(data: dict) -> tuple[str, str]:
+        return field(data, "db"), field(data, "role")
+
+    @app.get("/api/servers/<sid>/admin/access")
+    def admin_access(sid):
+        dbname, role = request.args.get("db"), request.args.get("role")
+        if not dbname or not role:
+            raise ApiError("'db' and 'role' are required.")
+        return access.read_access(server_for(sid), dbname, role)
+
+    @app.post("/api/servers/<sid>/admin/access/preview")
+    def admin_access_preview(sid):
+        data = body()
+        return {"sql": access.preview_access(server_for(sid), *access_args(data), data.get("changes"))}
+
+    @app.post("/api/servers/<sid>/admin/access")
+    def admin_access_apply(sid):
+        data = body()
+        return access.apply_access(server_for(sid), *access_args(data), data.get("changes"))
 
     # ------------------------------------------------------------ table transfer (decision 013)
 

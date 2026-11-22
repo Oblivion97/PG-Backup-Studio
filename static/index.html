@@ -343,6 +343,62 @@ details.adv > div { margin-top: 12px; }
 .problem { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .problem .m { flex: 1; min-width: 0; font-size: 13px; }
 .tgroups { padding: 4px 14px 14px; }
+/* ---------- admin: users, groups, access (decision 015) */
+.adm-subs { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+.adm-subs button { border: 0; background: none; height: 32px; padding: 0 14px; border-radius: 7px; cursor: pointer; color: var(--fg-2);
+  font: inherit; font-weight: 550; display: inline-flex; align-items: center; gap: 7px; }
+.adm-subs button:hover { color: var(--fg); }
+.adm-subs button.on { background: var(--surface); color: var(--accent); box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.08)); }
+.adm-subs .n { font-size: 11px; background: var(--surface-3); color: var(--fg-2); border-radius: 999px; padding: 0 7px; font-weight: 600; }
+.avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 650;
+  font-size: 12.5px; background: var(--accent-soft); color: var(--accent); text-transform: uppercase; }
+.avatar.group { background: var(--ok-soft); color: var(--ok); border-radius: 9px; }
+.avatar.sm { width: 26px; height: 26px; font-size: 11px; }
+.avatar.lg { width: 44px; height: 44px; font-size: 16px; }
+.avatar svg.icon { width: 16px; height: 16px; }
+.person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.person .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person .sub { font-size: 12px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-split { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 16px; align-items: start; }
+.who-list { display: flex; flex-direction: column; gap: 2px; padding: 8px; max-height: calc(100vh - 290px); overflow: auto; }
+.who-list .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--fg-3); font-weight: 650; padding: 10px 8px 4px; }
+.who-list button { all: unset; box-sizing: border-box; cursor: pointer; padding: 7px 8px; border-radius: 8px; display: block; }
+.who-list button:hover { background: var(--surface-2); }
+.who-list button.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.who-list button:focus-visible { outline: 2px solid var(--accent); }
+.acc-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-bottom: 12px; }
+.acc-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }
+.acc-head h4 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.acc-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; padding: 0 16px 14px; }
+.acc-grid .field > label { display: flex; align-items: center; gap: 6px; }
+.acc-tables { border-top: 1px solid var(--border); }
+.acc-tables table.t td { padding: 7px 14px; }
+.acc-more { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 10px 16px; color: var(--fg-2);
+  font-weight: 550; font-size: 13px; border-top: 1px solid var(--border); width: 100%; box-sizing: border-box; }
+.acc-more:hover { color: var(--accent); background: var(--surface-2); }
+.acc-more svg.icon { transition: transform .15s; width: 15px; height: 15px; }
+.acc-more.open svg.icon { transform: rotate(90deg); }
+select.level { border-left-width: 4px; font-weight: 550; }
+select.level[data-level="none"] { border-left-color: var(--border-strong); }
+select.level[data-level="read"] { border-left-color: var(--info); }
+select.level[data-level="write"] { border-left-color: var(--ok); }
+select.level[data-level="modify"] { border-left-color: var(--warn); }
+select.level[data-level="all"] { border-left-color: var(--danger); }
+select.level[data-level="custom"], select.level[data-level="mixed"] { border-left-color: var(--accent); }
+select.level.changed, select.input.changed { background: var(--accent-soft); }
+.priv-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.priv-chips .chip { padding: 2px 9px; font-size: 12px; }
+.eff { font-size: 11.5px; color: var(--fg-3); margin-top: 3px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--fg-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.changes-bar { position: sticky; bottom: 12px; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  margin-top: 14px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); flex-wrap: wrap; }
+.changes-bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+.plain-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 4px; max-height: 240px; overflow: auto; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.toggle-row:last-child { border-bottom: 0; }
+@media (max-width: 1000px) { .adm-split { grid-template-columns: 1fr; } .who-list { max-height: 260px; } .acc-grid { grid-template-columns: 1fr; } }
 .tg-h { display: flex; align-items: center; gap: 10px; padding: 12px 4px 8px; position: sticky; top: 0; background: var(--surface); z-index: 1; }
 .tgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
 .tcard { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; display: grid; gap: 6px; min-width: 0; background: var(--surface); }
@@ -441,6 +497,8 @@ const ICONS = {
   moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
   code: ['M16 18l6-6-6-6', 'M8 6l-6 6 6 6'],
   link: ['M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7', 'M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7'],
+  user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
+  users: ['M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M23 21v-2a4 4 0 0 0-3-3.9', 'M16 3.1a4 4 0 0 1 0 7.8'],
 };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
