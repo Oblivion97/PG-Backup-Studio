@@ -1,6 +1,6 @@
 # 015 — Simpler admin: Users, Groups and Access
 
-_Date: 2026-11-22 · Status: **proposed**, waiting for the user to try it. Builds on 011 (Admin panel)._
+_Date: 2026-11-22 · Status: **released in v0.14.0** (user built and pushed it 2026-11-22). Builds on 011 (Admin panel)._
 
 1. **Four sub-tabs instead of two:** Users · Groups · Access · Sessions (Sessions unchanged). Users = roles with LOGIN,
    Groups = roles without; built-in `pg_` roles only appear as optional chips under "More options" of a user.

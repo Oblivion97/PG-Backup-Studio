@@ -33,7 +33,7 @@ from store import Store, StoreError
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.14.0"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WORKSPACE_SCRIPTS = ("console.js", "grid.js", "explorer.js", "backup.js", "servers.js", "admin.js", "transfer.js",
                      "pickers.js", "retry.js")   # served at /ws/<name>, nothing else
