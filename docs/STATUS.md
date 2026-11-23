@@ -1,6 +1,6 @@
 # PG Backup Studio — Project Status
 
-_Last updated: 2026-11-19_
+_Last updated: 2026-11-23_
 
 Spec: `.claude/commands/pg-backup-studio.md` · Design: `docs/ARCHITECTURE.md` · Decisions:
 `docs/decisions/` · Tests: `docs/QA_REPORT.md`
@@ -98,6 +98,12 @@ interrupted backup or restore (Activity + History, works after a restart; a rest
 restore-as-is), TCP keepalives so a dropped network fails a job within ~90 s instead of hanging, and native folder /
 file dialogs in browser mode (`native_dialogs.py`), including Browse… for Restore → File on this PC. A new default backup folder in Settings now replaces the folder
 each database remembered. Decision 014.
+
+**Added 2026-11-22 (user request), v0.14.0:** simpler Admin tab — Users · Groups · Access · Sessions. Short user and
+group forms (groups and members as chips, the rest under "More options"); Access picks a user or group and a database
+and sets per schema (or per table) No access / Read only / Read & write / Read, write & delete / Full control / Custom
+from a dropdown, plus run functions, create tables, tables created later and database rights; schema USAGE, CONNECT
+and serial sequences are added automatically. `engine/access.py`, decision 015.
 Tests: `tests/test_retry.py`.
 
 **Added 2026-11-17 (user request, approved after trying it), v0.12.0:** Transfer tab
